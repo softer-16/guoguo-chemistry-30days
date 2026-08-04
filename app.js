@@ -2,10 +2,19 @@
   "use strict";
 
   const DATA = window.CHEM_DATA;
-  const STORAGE_KEY = "guoguo-chemistry-progress-v1";
+  const LEGACY_STORAGE_KEY = "guoguo-chemistry-progress-v1";
+  const CLOUD_CONFIG = window.CHEM_SUPABASE_CONFIG || {};
+  const cloudConfigured = Boolean(CLOUD_CONFIG.url && CLOUD_CONFIG.publishableKey && !CLOUD_CONFIG.url.includes("YOUR_") && !CLOUD_CONFIG.publishableKey.includes("YOUR_"));
   const REVIEW_INTERVALS = [0, 1, 3, 7];
   const app = document.getElementById("app");
   const toast = document.getElementById("toast");
+  let cloud = null;
+  let currentUser = null;
+  let stateRevision = 0;
+  let syncStatus = "idle";
+  let syncTimer = null;
+  let syncInFlight = false;
+  let syncPending = false;
 
   const iconPaths = {
     home: '<path d="M3 11 12 3l9 8v9a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/>',
@@ -49,15 +58,142 @@
     };
   }
 
-  function loadState() {
-    try {
-      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
-      return saved && typeof saved === "object" ? {...defaultState(), ...saved, settings: {...defaultState().settings, ...(saved.settings || {})}} : defaultState();
-    } catch { return defaultState(); }
+  function normalizeState(value) {
+    return value && typeof value === "object" ? {...defaultState(), ...value, settings: {...defaultState().settings, ...(value.settings || {})}} : defaultState();
   }
-  let state = loadState();
-  function saveState() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+  function readState(key) {
+    try {
+      const saved = JSON.parse(localStorage.getItem(key));
+      return saved && typeof saved === "object" ? normalizeState(saved) : null;
+    } catch { return null; }
+  }
+  function userStorageKey() {
+    return currentUser ? `${LEGACY_STORAGE_KEY}:${currentUser.id}` : null;
+  }
+  function saveLocalState() {
+    const key = userStorageKey();
+    if (key) localStorage.setItem(key, JSON.stringify(state));
+  }
+  let state = defaultState();
+  function saveState() {
+    saveLocalState();
+    stateRevision += 1;
+    scheduleCloudSave();
+  }
   function notify(message) { toast.textContent = message; toast.classList.add("show"); clearTimeout(notify.timer); notify.timer = setTimeout(() => toast.classList.remove("show"), 2200); }
+  function syncStatusText() {
+    return syncStatus === "saving" ? "保存中" : syncStatus === "saved" ? "已保存" : syncStatus === "error" ? "保存失败" : "等待同步";
+  }
+  function syncStatusMarkup() {
+    return `<span class="sync-status ${syncStatus}" data-sync-status><span>${syncStatusText()}</span></span>`;
+  }
+  function updateSyncStatus(next) {
+    syncStatus = next;
+    document.querySelectorAll("[data-sync-status]").forEach(element => {
+      element.className = `sync-status ${next}`;
+      const label = element.querySelector("span");
+      if (label) label.textContent = syncStatusText();
+    });
+  }
+  function scheduleCloudSave() {
+    if (!cloud || !currentUser) return;
+    updateSyncStatus("saving");
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(syncStateNow, 350);
+  }
+  async function syncStateNow() {
+    if (!cloud || !currentUser) return false;
+    if (syncInFlight) { syncPending = true; return false; }
+    clearTimeout(syncTimer);
+    syncInFlight = true;
+    syncPending = false;
+    updateSyncStatus("saving");
+    const revision = stateRevision;
+    const snapshot = JSON.parse(JSON.stringify(state));
+    let error = null;
+    try {
+      ({error} = await cloud.from("user_progress").upsert({user_id:currentUser.id,state:snapshot,updated_at:new Date().toISOString()},{onConflict:"user_id"}));
+    } catch {
+      error = true;
+    }
+    syncInFlight = false;
+    if (error) { updateSyncStatus("error"); return false; }
+    if (revision === stateRevision && !syncPending) updateSyncStatus("saved");
+    else scheduleCloudSave();
+    return true;
+  }
+  async function loadCloudState() {
+    const scoped = readState(userStorageKey());
+    const legacy = readState(LEGACY_STORAGE_KEY);
+    const {data,error} = await cloud.from("user_progress").select("state,updated_at").eq("user_id",currentUser.id).maybeSingle();
+    if (error) throw error;
+    if (data?.state) {
+      state = normalizeState(data.state);
+      saveLocalState();
+      if (legacy) localStorage.removeItem(LEGACY_STORAGE_KEY);
+      updateSyncStatus("saved");
+      return;
+    }
+    state = normalizeState(scoped || legacy || defaultState());
+    saveLocalState();
+    const migrated = await syncStateNow();
+    if (migrated && legacy) localStorage.removeItem(LEGACY_STORAGE_KEY);
+  }
+  function renderAuth(errorMessage = "") {
+    const unavailable = !cloudConfigured ? "云端服务尚未配置。请先按照 README 填写 config.js。" : !window.supabase?.createClient ? "登录组件加载失败，请检查网络后刷新页面。" : "";
+    app.innerHTML = `<main id="main" class="auth-page"><div class="auth-shell"><section class="auth-intro"><div class="brand">${icon("flask","brand-mark")}<span>果果的化学<br>30天通关</span></div><h1>每天学懂一点，进度一直都在。</h1><p>登录后，Safari 和 Edge 会读取同一份学习记录。</p></section><section class="auth-card"><h2>登录学习账号</h2><p>使用家长管理的邮箱和密码登录。</p>${unavailable ? `<div class="setup-note">${esc(unavailable)}</div>` : ""}${errorMessage ? `<div class="auth-error" role="alert">${esc(errorMessage)}</div>` : ""}<form class="auth-form" id="login-form"><label class="auth-field">邮箱<input type="email" name="email" autocomplete="username" required ${unavailable ? "disabled" : ""}></label><label class="auth-field">密码<input type="password" name="password" autocomplete="current-password" required ${unavailable ? "disabled" : ""}></label><button class="button primary" type="submit" ${unavailable ? "disabled" : ""}>登录并读取学习进度</button></form></section></div></main>`;
+  }
+  async function signIn(form) {
+    const button = form.querySelector('button[type="submit"]');
+    button.disabled = true;
+    button.textContent = "正在登录…";
+    const email = form.elements.email.value.trim();
+    const password = form.elements.password.value;
+    let data;
+    let error;
+    try {
+      ({data,error} = await cloud.auth.signInWithPassword({email,password}));
+    } catch {
+      renderAuth("无法连接登录服务，请检查网络后重试。");
+      return;
+    }
+    if (error || !data.user) { renderAuth("邮箱或密码不正确，请检查后重试。"); return; }
+    currentUser = data.user;
+    try {
+      await loadCloudState();
+      if (!location.hash) location.hash = "#/today";
+      render();
+    } catch {
+      await cloud.auth.signOut();
+      currentUser = null;
+      renderAuth("账号已登录，但读取学习进度失败。请检查网络或数据库配置。");
+    }
+  }
+  async function signOut() {
+    await syncStateNow();
+    try { await cloud.auth.signOut(); } catch {}
+    clearTimeout(syncTimer);
+    currentUser = null;
+    state = defaultState();
+    syncStatus = "idle";
+    syncPending = false;
+    renderAuth();
+  }
+  async function bootstrap() {
+    if (!cloudConfigured || !window.supabase?.createClient) { renderAuth(); return; }
+    cloud = window.supabase.createClient(CLOUD_CONFIG.url,CLOUD_CONFIG.publishableKey,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
+    const {data,error} = await cloud.auth.getSession();
+    if (error || !data.session?.user) { renderAuth(error ? "无法检查登录状态，请刷新后重试。" : ""); return; }
+    currentUser = data.session.user;
+    try {
+      await loadCloudState();
+      if (!location.hash) location.hash = "#/today";
+      render();
+    } catch {
+      currentUser = null;
+      renderAuth("读取学习进度失败，请检查网络或数据库配置。");
+    }
+  }
 
   function navItems() {
     return [
@@ -68,9 +204,9 @@
   function shell(content, active = "today") {
     const nav = navItems().map(([route, label, iconName]) => `<button class="nav-button ${active === route.split("/")[0] ? "active" : ""}" data-route="${route}">${icon(iconName)}<span>${label}</span></button>`).join("");
     const mobile = [["today","今日","home"],["bank","题库","bank"],["wrong","错题","wrong"],["record","记录","record"]].map(([route,label,iconName]) => `<button class="${active === route ? "active" : ""}" data-route="${route}">${icon(iconName)}<span>${label}</span></button>`).join("");
-    return `<div class="mobile-top"><div class="brand">${icon("flask","brand-mark")}<span>果果的化学·30天通关</span></div><button class="button ghost small" data-route="settings" aria-label="设置">${icon("menu")}</button></div>
+    return `<div class="mobile-top"><div class="brand">${icon("flask","brand-mark")}<span>果果的化学·30天通关</span></div><div class="mobile-top-actions">${syncStatusMarkup()}<button class="button ghost small" data-route="settings" aria-label="设置">${icon("menu")}</button><button class="button ghost small" data-action="logout">退出</button></div></div>
       <div class="app-shell"><aside class="sidebar"><div class="brand">${icon("flask","brand-mark")}<span>果果的化学<br>30天通关</span></div><nav class="nav" aria-label="主导航">${nav}</nav><div class="sidebar-bottom"><button class="nav-button" data-route="settings">${icon("settings")}<span>提醒与数据</span></button><div class="quiet-note">先把今天真正学懂，再向前走。不会做不是失败，是系统需要补课的信号。</div></div></aside>
-      <div class="main-wrap"><header class="topbar"><div class="topbar-actions"><button class="button ghost" data-route="settings">${icon("settings")}提醒与数据</button><button class="button" data-route="parent/${activeDayId()}">${icon("users")}家长视图</button></div></header><main id="main">${content}</main></div></div>
+      <div class="main-wrap"><header class="topbar"><div class="topbar-actions">${syncStatusMarkup()}<span class="account-email" title="${esc(currentUser.email || "")}">${esc(currentUser.email || "")}</span><button class="button ghost" data-route="settings">${icon("settings")}提醒与数据</button><button class="button" data-route="parent/${activeDayId()}">${icon("users")}家长视图</button><button class="button ghost" data-action="logout">退出</button></div></header><main id="main">${content}</main></div></div>
       <nav class="mobile-nav" aria-label="移动端主导航">${mobile}</nav>`;
   }
 
@@ -141,7 +277,7 @@
     const q = questionById(day.questions[questionIndex]);
     const outline = day.sections.map((item,index) => `<button class="outline-item ${index === sectionIndex ? "active" : ""}" data-action="lesson-section" data-day="${day.id}" data-index="${index}">${index+1}. ${esc(item.title)}</button>`).join("");
     const content = `<div class="lesson-shell"><aside class="lesson-outline"><button class="back-link" data-route="today">${icon("back")}返回今日学习</button><h2>${esc(day.unit)}</h2><p class="meta">学习进度 ${sectionIndex+1}/${day.sections.length}</p><div class="outline-progress"><span style="width:${(sectionIndex+1)/day.sections.length*100}%"></span></div>${outline}</aside>
-      <article class="lesson-main"><div class="reading-ref">${icon("book")}<div>${day.reading.map(item => `<div>${esc(item)}</div>`).join("")}</div></div><section class="lesson-section"><h1>${esc(section.title)}</h1>${section.body.map(text => `<p>${esc(text)}</p>`).join("")}<div class="rule-box">考试口令：${esc(section.rule)}</div>${sectionIndex === 0 ? `<div class="note-box"><strong>今天怎么学：</strong>看完一个小节，立刻在右侧做一道对应题。答错先用提示找漏洞，不要急着背答案。</div>` : ""}</section><div class="lesson-actions"><button class="button" data-action="prev-section" data-day="${day.id}" ${sectionIndex===0?"disabled":""}>${icon("back")}上一节</button><button class="button primary" data-action="next-section" data-day="${day.id}" ${sectionIndex===day.sections.length-1?"disabled":""}>下一节${icon("arrow")}</button></div></article>
+      <article class="lesson-main"><div class="reading-ref">${icon("book")}<div><strong>今日资料定位</strong><div>${esc(day.reading[0])}</div></div></div>${sectionIndex === 0 ? `<div class="study-sequence">${day.reading.map((item,index) => `<div class="study-step"><span class="study-step-number">${index+1}</span><div><strong>${["先看课本","再看教材帮","合上资料输出"][index] || "立即练习"}</strong><p>${esc(item)}</p></div></div>`).join("")}</div>` : ""}<section class="lesson-section"><h1>${esc(section.title)}</h1>${section.body.map(text => `<p>${esc(text)}</p>`).join("")}<div class="rule-box">考试口令：${esc(section.rule)}</div>${sectionIndex === 0 ? `<div class="note-box"><strong>执行顺序：</strong>看完本节后立即做右侧对应题；答错先看分步提示，再回到正文定位规则，最后独立重做。</div>` : ""}</section><div class="lesson-actions"><button class="button" data-action="prev-section" data-day="${day.id}" ${sectionIndex===0?"disabled":""}>${icon("back")}上一节</button><button class="button primary" data-action="next-section" data-day="${day.id}" ${sectionIndex===day.sections.length-1?"disabled":""}>下一节${icon("arrow")}</button></div></article>
       <aside class="practice-rail">${renderQuestion(q, "practice", questionIndex, day.questions.length)}</aside></div>`;
     app.innerHTML = shell(content, "today");
   }
@@ -156,7 +292,7 @@
   }
 
   function renderMap() {
-    const route = DATA.route.map(item => `<div class="question-row"><strong>Day ${String(item.day).padStart(2,"0")}</strong><div><p>${esc(item.title)}</p><span class="tag">${item.ready ? "第一阶段内容已就绪" : "后续滚动交付"}</span></div>${item.ready ? `<button class="button small" data-route="lesson/${item.id}">开始学习</button>` : `<span class="meta">路线已确定</span>`}</div>`).join("");
+    const route = DATA.route.map(item => `<div class="question-row"><strong>Day ${String(item.day).padStart(2,"0")}</strong><div><p>${esc(item.title)}</p><span class="tag">${item.ready ? "详细学练内容已就绪" : "后续滚动交付"}</span></div>${item.ready ? `<button class="button small" data-route="lesson/${item.id}">开始学习</button>` : `<span class="meta">路线已确定</span>`}</div>`).join("");
     app.innerHTML = shell(`<div class="page narrow"><h1>30天知识地图</h1><p class="lead">先建立概念与实验基础，再学习微观世界、化学用语和方程式，最后用四套综合卷连续验收。</p><div class="question-list">${route}</div></div>`, "map");
   }
 
@@ -167,7 +303,7 @@
     const topics = [...new Set(DATA.questions.map(q => q.topic))];
     const filtered = DATA.questions.filter(q => (dayFilter === "all" || q.day === dayFilter) && (topicFilter === "all" || q.topic === topicFilter));
     const rows = filtered.map(q => `<div class="question-row"><strong>${esc(q.id)}</strong><div><p>${esc(q.question)}</p><span class="tag">${esc(q.topic)} · ${esc(q.difficulty)} · 来源在家长视图可查</span></div><button class="button small" data-route="practice/${q.day}?question=${q.id}">练习</button></div>`).join("");
-    const content = `<div class="page"><h1>分考点题库</h1><p class="lead">第一阶段已核对90题。完全重复题不进入每日练习，相似但考法不同的变式题保留。</p><div class="filters"><select class="select" data-filter="day"><option value="all">全部日期</option>${DATA.days.map(day => `<option value="${day.id}" ${dayFilter===day.id?"selected":""}>Day ${String(day.day).padStart(2,"0")}</option>`).join("")}</select><select class="select" data-filter="topic"><option value="all">全部考点</option>${topics.map(topic => `<option value="${esc(topic)}" ${topicFilter===topic?"selected":""}>${esc(topic)}</option>`).join("")}</select></div><div class="question-list">${rows}</div></div>`;
+    const content = `<div class="page"><h1>分考点题库</h1><p class="lead">前10天已整理并核对 ${DATA.questions.length} 题，覆盖对应考点、方法、易错点和典型题型；相似但考法不同的变式题保留。</p><div class="filters"><select class="select" data-filter="day"><option value="all">全部日期</option>${DATA.days.map(day => `<option value="${day.id}" ${dayFilter===day.id?"selected":""}>Day ${String(day.day).padStart(2,"0")}</option>`).join("")}</select><select class="select" data-filter="topic"><option value="all">全部考点</option>${topics.map(topic => `<option value="${esc(topic)}" ${topicFilter===topic?"selected":""}>${esc(topic)}</option>`).join("")}</select></div><div class="question-list">${rows}</div></div>`;
     app.innerHTML = shell(content, "bank");
   }
 
@@ -211,7 +347,7 @@
 
   function renderSettings() {
     const times = state.settings.times.map((time,index) => `<div class="time-row"><input class="input" type="time" value="${esc(time)}" data-time-index="${index}"><button class="button small danger" data-action="remove-time" data-index="${index}">删除</button></div>`).join("");
-    const content = `<div class="page narrow"><h1>提醒与数据</h1><div class="settings-grid"><section class="setting-block"><h2>学习提醒</h2><label class="completion-item"><input type="checkbox" id="reminder-enabled" ${state.settings.reminderEnabled ? "checked" : ""}>启用提醒时段</label><div id="time-list">${times}</div><button class="button small" data-action="add-time">添加时段</button><p class="meta">网页关闭后由iPhone日历负责提醒；网站本身不申请推送权限。</p><button class="button" data-action="calendar">${icon("download")}生成日历提醒文件</button></section><section class="setting-block"><h2>电脑与手机手动同步</h2><p>先在当前设备导出JSON，再在另一台设备导入。系统不会自动上传学习数据。</p><div style="display:flex;gap:10px;flex-wrap:wrap"><button class="button" data-action="export">${icon("download")}导出进度</button><label class="button">${icon("upload")}导入进度<input class="file-input" id="import-file" type="file" accept="application/json"></label></div></section><section class="setting-block"><h2>重置</h2><p>只在需要从头开始时使用。此操作会清除本浏览器中的答案和错题记录。</p><button class="button danger" data-action="reset">清除本机进度</button></section></div></div>`;
+    const content = `<div class="page narrow"><h1>提醒与数据</h1><div class="settings-grid"><section class="setting-block"><h2>学习提醒</h2><label class="completion-item"><input type="checkbox" id="reminder-enabled" ${state.settings.reminderEnabled ? "checked" : ""}>启用提醒时段</label><div id="time-list">${times}</div><button class="button small" data-action="add-time">添加时段</button><p class="meta">网页关闭后由iPhone日历负责提醒；网站本身不申请推送权限。</p><button class="button" data-action="calendar">${icon("download")}生成日历提醒文件</button></section><section class="setting-block"><h2>云端同步与备份</h2><p>登录账号后，电脑与移动设备会自动读取同一份学习进度。请等待顶部显示“已保存”后再关闭网页。</p><div style="display:flex;gap:10px;flex-wrap:wrap"><button class="button" data-action="export">${icon("download")}导出进度</button><label class="button">${icon("upload")}导入进度<input class="file-input" id="import-file" type="file" accept="application/json"></label></div></section><section class="setting-block"><h2>重置</h2><p>只在需要从头开始时使用。此操作会清除当前账号的答案和错题记录，并同步到云端。</p><button class="button danger" data-action="reset">重置当前账号进度</button></section></div></div>`;
     app.innerHTML = shell(content, "settings");
   }
 
@@ -292,6 +428,7 @@
   }
 
   app.addEventListener("click", event => {
+    if (!currentUser) return;
     const routeTarget = event.target.closest("[data-route]");
     if (routeTarget) { location.hash = `#/${routeTarget.dataset.route}`; return; }
     const actionTarget = event.target.closest("[data-action]"); if (!actionTarget) return;
@@ -307,11 +444,12 @@
     else if (action === "oral-toggle") { const key=`${day}:${index}`; state.oralOpen[key]=!state.oralOpen[key]; saveState(); render(); }
     else if (action === "toggle-task") { const key=`${day}:${index}`; state.tasks[key]=!state.tasks[key]; saveState(); render(); }
     else if (action === "parent-verify") { state.parentVerified[day]=true; saveState(); notify("已记录家长验收。"); render(); }
+    else if (action === "logout") signOut();
     else if (action === "export") exportState();
     else if (action === "calendar") calendarFile();
     else if (action === "add-time") { state.settings.times.push("16:00"); saveState(); render(); }
     else if (action === "remove-time") { state.settings.times.splice(Number(index),1); saveState(); render(); }
-    else if (action === "reset" && confirm("确认清除本机全部学习进度吗？此操作不可撤销。")) { state=defaultState();saveState();notify("本机进度已清除。");render(); }
+    else if (action === "reset" && confirm("确认重置当前账号的全部学习进度吗？此操作会同步到云端且不可撤销。")) { state=defaultState();saveState();notify("当前账号进度已重置。");render(); }
   });
   app.addEventListener("change", event => {
     if (event.target.matches("[data-filter]")) { const day=document.querySelector('[data-filter="day"]')?.value||"all"; const topic=document.querySelector('[data-filter="topic"]')?.value||"all"; location.hash=`#/bank?day=${encodeURIComponent(day)}&topic=${encodeURIComponent(topic)}`; }
@@ -319,6 +457,12 @@
     if (event.target.id === "reminder-enabled") { state.settings.reminderEnabled=event.target.checked;saveState(); }
     if (event.target.matches("[data-time-index]")) { state.settings.times[Number(event.target.dataset.timeIndex)]=event.target.value;saveState(); }
   });
-  window.addEventListener("hashchange", render);
-  if (!location.hash) location.hash = "#/today"; else render();
+  app.addEventListener("submit", event => {
+    if (event.target.id !== "login-form") return;
+    event.preventDefault();
+    signIn(event.target);
+  });
+  window.addEventListener("hashchange", () => { if (currentUser) render(); });
+  window.addEventListener("online", () => { if (currentUser) syncStateNow(); });
+  bootstrap();
 })();
