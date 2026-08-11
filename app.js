@@ -196,9 +196,12 @@
   }
 
   function navItems() {
+    const current = dayById(state.currentDay);
+    const availableTests = DATA.days.filter(day => day.test && day.day <= current.day);
+    const testDay = availableTests.at(-1) || DATA.days.find(day => day.test);
     return [
       ["today", "今日学习", "home"], ["map", "知识地图", "map"], ["bank", "分考点题库", "bank"],
-      ["wrong", "错题本", "wrong"], ["test/day03", "三日测", "test"], ["record", "学习记录", "record"]
+      ["wrong", "错题本", "wrong"], [`test/${testDay?.id || "day03"}`, "滚动检测", "test"], ["record", "学习记录", "record"]
     ];
   }
   function shell(content, active = "today") {
@@ -238,7 +241,13 @@
       ["即时练习", `${stats.correct}/${stats.questionTotal}题已正确`, stats.correct === stats.questionTotal], ["当日检测", "正确率达到85%并完成订正", taskDone(day.id,3)],
       ["家长验收", "口头检查三个核心问题", stats.verified]
     ];
-    const rail = steps.map((step,index) => `<div class="rail-row ${step[2] ? "done" : index === 0 ? "current" : ""}"><div class="rail-number">${step[2] ? icon("check") : index+1}</div><div class="rail-label">${esc(step[0])}</div><div class="rail-note">${esc(step[1])}</div>${index < 2 ? `<button class="button small" data-route="lesson/${day.id}">进入</button>` : `<span class="check-button ${step[2] ? "checked" : ""}">${step[2] ? icon("check") : ""}</span>`}</div>`).join("");
+    const rail = steps.map((step,index) => {
+      let action = `<span class="check-button ${step[2] ? "checked" : ""}">${step[2] ? icon("check") : ""}</span>`;
+      if (index < 2) action = `<button class="button small" data-route="lesson/${day.id}">进入</button>`;
+      if (index === 2) action = `<button class="button small" data-route="practice/${day.id}">练习</button>`;
+      if (index === 3 && day.test) action = `<button class="button small" data-route="test/${day.id}">检测</button>`;
+      return `<div class="rail-row ${step[2] ? "done" : index === 0 ? "current" : ""}"><div class="rail-number">${step[2] ? icon("check") : index+1}</div><div class="rail-label">${esc(step[0])}</div><div class="rail-note">${esc(step[1])}</div>${action}</div>`;
+    }).join("");
     const taskList = day.tasks.map((task,index) => `<button class="task-row ${taskDone(day.id,index) ? "done" : ""}" data-action="toggle-task" data-day="${day.id}" data-index="${index}"><span class="task-check">${taskDone(day.id,index) ? icon("check") : ""}</span><span><strong>任务${index+1}</strong>${esc(task)}</span></button>`).join("");
     const due = dueWrong();
     const dueHtml = due.length ? due.slice(0,4).map(item => { const q = questionById(item.questionId); return `<div class="due-item"><p>${esc(q?.question || item.questionId)}</p><div class="meta"><span>${esc(item.reason)}</span><span class="attention">今天到期</span></div></div>`; }).join("") + `<button class="button ghost small" data-route="wrong">查看全部错题 ${icon("arrow")}</button>` : `<div class="empty"><p>今天没有到期错题。</p></div>`;
@@ -303,7 +312,7 @@
     const topics = [...new Set(DATA.questions.map(q => q.topic))];
     const filtered = DATA.questions.filter(q => (dayFilter === "all" || q.day === dayFilter) && (topicFilter === "all" || q.topic === topicFilter));
     const rows = filtered.map(q => `<div class="question-row"><strong>${esc(q.id)}</strong><div><p>${esc(q.question)}</p><span class="tag">${esc(q.topic)} · ${esc(q.difficulty)} · 来源在家长视图可查</span></div><button class="button small" data-route="practice/${q.day}?question=${q.id}">练习</button></div>`).join("");
-    const content = `<div class="page"><h1>分考点题库</h1><p class="lead">前10天已整理并核对 ${DATA.questions.length} 题，覆盖对应考点、方法、易错点和典型题型；相似但考法不同的变式题保留。</p><div class="filters"><select class="select" data-filter="day"><option value="all">全部日期</option>${DATA.days.map(day => `<option value="${day.id}" ${dayFilter===day.id?"selected":""}>Day ${String(day.day).padStart(2,"0")}</option>`).join("")}</select><select class="select" data-filter="topic"><option value="all">全部考点</option>${topics.map(topic => `<option value="${esc(topic)}" ${topicFilter===topic?"selected":""}>${esc(topic)}</option>`).join("")}</select></div><div class="question-list">${rows}</div></div>`;
+    const content = `<div class="page"><h1>分考点题库</h1><p class="lead">30天共整理 ${DATA.questions.length} 题，覆盖对应考点、方法、易错点和典型题型；相似但考法不同的变式题保留。</p><div class="filters"><select class="select" data-filter="day"><option value="all">全部日期</option>${DATA.days.map(day => `<option value="${day.id}" ${dayFilter===day.id?"selected":""}>Day ${String(day.day).padStart(2,"0")}</option>`).join("")}</select><select class="select" data-filter="topic"><option value="all">全部考点</option>${topics.map(topic => `<option value="${esc(topic)}" ${topicFilter===topic?"selected":""}>${esc(topic)}</option>`).join("")}</select></div><div class="question-list">${rows}</div></div>`;
     app.innerHTML = shell(content, "bank");
   }
 
@@ -338,11 +347,13 @@
 
   function renderTest(dayId) {
     const day = dayById(dayId);
-    if (!day.test) { app.innerHTML = shell(`<div class="page"><div class="empty"><h2>本次滚动检测尚未开放</h2><p>第一次三日测安排在Day03。</p></div></div>`, "test"); return; }
+    if (!day.test) { app.innerHTML = shell(`<div class="page"><div class="empty"><h2>今天没有单独的滚动检测</h2><p>请从左侧“滚动检测”进入最近已开放的一次检测。</p></div></div>`, "test"); return; }
     const key = `test:${day.id}`;
     const index = Math.min(state.questionIndex[key] || 0, day.test.length-1);
     const q = questionById(day.test[index]);
-    app.innerHTML = shell(`<div class="page narrow"><h1>Day 01–03 第一次滚动检测</h1><p class="lead">15题，建议独立完成。检测后统一回看所有错误题的完整解析。</p><section class="side-panel">${renderQuestion(q,"test",index,day.test.length)}</section></div>`, "test");
+    const title = day.testTitle || `Day ${String(day.day).padStart(2, "0")} 滚动检测`;
+    const intro = day.testIntro || `${day.test.length}题，建议独立完成。检测后统一回看所有错误题的完整解析。`;
+    app.innerHTML = shell(`<div class="page narrow"><h1>${esc(title)}</h1><p class="lead">${esc(intro)}</p><section class="side-panel">${renderQuestion(q,"test",index,day.test.length)}</section></div>`, "test");
   }
 
   function renderSettings() {
