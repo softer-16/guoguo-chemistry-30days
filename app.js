@@ -2,6 +2,7 @@
   "use strict";
 
   const DATA = window.CHEM_DATA;
+  const ACCESS = window.CHEM_ENTITLEMENT;
   const LEGACY_STORAGE_KEY = "guoguo-chemistry-progress-v1";
   const CLOUD_CONFIG = window.CHEM_SUPABASE_CONFIG || {};
   const cloudConfigured = Boolean(CLOUD_CONFIG.url && CLOUD_CONFIG.publishableKey && !CLOUD_CONFIG.url.includes("YOUR_") && !CLOUD_CONFIG.publishableKey.includes("YOUR_"));
@@ -10,6 +11,8 @@
   const toast = document.getElementById("toast");
   let cloud = null;
   let currentUser = null;
+  let currentEntitlement = null;
+  let entitlementDecision = {allowed:false, reason:"missing", entitlement:null};
   let stateRevision = 0;
   let syncStatus = "idle";
   let syncTimer = null;
@@ -41,17 +44,9 @@
   const questionById = id => DATA.questions.find(question => question.id === id);
   const dayById = id => DATA.days.find(day => day.id === id) || DATA.days[0];
 
-  function scheduledDay() {
-    const start = new Date(`${DATA.startDate}T00:00:00`);
-    const now = new Date();
-    const diff = Math.floor((now - start) / 86400000) + 1;
-    return `day${String(Math.max(1, Math.min(30, diff))).padStart(2, "0")}`;
-  }
-
   function defaultState() {
     return {
       version: DATA.version,
-      currentDay: scheduledDay(),
       tasks: {}, answers: {}, wrong: {}, parentVerified: {},
       lessonSection: {}, questionIndex: {}, hints: {}, oralOpen: {},
       settings: { reminderEnabled: true, times: ["10:30"] }
@@ -96,13 +91,13 @@
     });
   }
   function scheduleCloudSave() {
-    if (!cloud || !currentUser) return;
+    if (!cloud || !currentUser || !entitlementDecision.allowed) return;
     updateSyncStatus("saving");
     clearTimeout(syncTimer);
     syncTimer = setTimeout(syncStateNow, 350);
   }
   async function syncStateNow() {
-    if (!cloud || !currentUser) return false;
+    if (!cloud || !currentUser || !entitlementDecision.allowed) return false;
     if (syncInFlight) { syncPending = true; return false; }
     clearTimeout(syncTimer);
     syncInFlight = true;
@@ -139,8 +134,63 @@
     const migrated = await syncStateNow();
     if (migrated && legacy) localStorage.removeItem(LEGACY_STORAGE_KEY);
   }
+  async function loadCourseEntitlement() {
+    const {data,error} = await cloud.from("course_entitlements")
+      .select("user_id,course_id,status,plan_start_date,expires_at,created_at,updated_at")
+      .eq("course_id", ACCESS.COURSE_ID)
+      .eq("user_id", currentUser.id)
+      .maybeSingle();
+    if (error) throw error;
+    currentEntitlement = data || null;
+    entitlementDecision = ACCESS.evaluateEntitlement(currentEntitlement);
+    return entitlementDecision;
+  }
+  function planStatus() {
+    return ACCESS.learningPlanStatus(currentEntitlement?.plan_start_date);
+  }
+  function refreshEntitlementDecision() {
+    entitlementDecision = ACCESS.evaluateEntitlement(currentEntitlement);
+    return entitlementDecision.allowed;
+  }
+  function suggestedDay() {
+    const plan = planStatus();
+    return DATA.days.find(day => day.day === (plan.suggestedDay || 1)) || DATA.days[0];
+  }
+  function entitlementMessage(reason) {
+    if (reason === "suspended") return ["课程授权已暂停", "如有疑问，请联系管理员确认账号状态。"];
+    if (reason === "revoked") return ["课程授权已撤销", "当前账号不能继续访问课程。如有疑问，请联系管理员。"];
+    if (reason === "expired") return ["课程授权已失效", "当前授权已超过有效期，请联系管理员核对。"];
+    if (reason === "unavailable") return ["暂时无法检查课程授权", "请检查网络后刷新页面；如持续出现，请联系管理员。"];
+    return ["当前账号尚未开通果果化学30天课程", "如已购买，请联系管理员确认账号。"];
+  }
+  function renderEntitlementStatus() {
+    const [title,message] = entitlementMessage(entitlementDecision.reason);
+    app.innerHTML = `<main id="main" class="auth-page"><div class="auth-shell"><section class="auth-intro"><div class="brand">${icon("flask","brand-mark")}<span>果果的化学<br>30天通关</span></div><h1>完整30天课程，一次开通长期学习。</h1><p>课程授权与30天学习计划进度相互独立。</p></section><section class="auth-card"><h2>${esc(title)}</h2><p>${esc(message)}</p><div class="setup-note">当前登录账号：${esc(currentUser?.email || "")}</div><button class="button" type="button" data-action="logout">退出当前账号</button></section></div></main>`;
+  }
+  async function enterCourse() {
+    try {
+      await loadCourseEntitlement();
+    } catch {
+      currentEntitlement = null;
+      entitlementDecision = {allowed:false, reason:"unavailable", entitlement:null};
+      renderEntitlementStatus();
+      return;
+    }
+    if (!entitlementDecision.allowed) { renderEntitlementStatus(); return; }
+    try {
+      await loadCloudState();
+      if (!location.hash) location.hash = "#/today";
+      render();
+    } catch {
+      await cloud.auth.signOut();
+      currentUser = null;
+      currentEntitlement = null;
+      entitlementDecision = {allowed:false, reason:"missing", entitlement:null};
+      renderAuth("账号已授权，但读取学习进度失败。请检查网络或数据库配置。");
+    }
+  }
   function renderAuth(errorMessage = "") {
-    const unavailable = !cloudConfigured ? "云端服务尚未配置。请先按照 README 填写 config.js。" : !window.supabase?.createClient ? "登录组件加载失败，请检查网络后刷新页面。" : "";
+    const unavailable = !cloudConfigured ? "云端服务尚未配置。请先按照 README 填写 config.js。" : !window.supabase?.createClient ? "登录组件加载失败，请检查网络后刷新页面。" : !ACCESS ? "课程授权组件加载失败，请刷新页面。" : "";
     app.innerHTML = `<main id="main" class="auth-page"><div class="auth-shell"><section class="auth-intro"><div class="brand">${icon("flask","brand-mark")}<span>果果的化学<br>30天通关</span></div><h1>每天学懂一点，进度一直都在。</h1><p>登录后，Safari 和 Edge 会读取同一份学习记录。</p></section><section class="auth-card"><h2>登录学习账号</h2><p>使用家长管理的邮箱和密码登录。</p>${unavailable ? `<div class="setup-note">${esc(unavailable)}</div>` : ""}${errorMessage ? `<div class="auth-error" role="alert">${esc(errorMessage)}</div>` : ""}<form class="auth-form" id="login-form"><label class="auth-field">邮箱<input type="email" name="email" autocomplete="username" required ${unavailable ? "disabled" : ""}></label><label class="auth-field">密码<input type="password" name="password" autocomplete="current-password" required ${unavailable ? "disabled" : ""}></label><button class="button primary" type="submit" ${unavailable ? "disabled" : ""}>登录并读取学习进度</button></form></section></div></main>`;
   }
   async function signIn(form) {
@@ -159,44 +209,31 @@
     }
     if (error || !data.user) { renderAuth("邮箱或密码不正确，请检查后重试。"); return; }
     currentUser = data.user;
-    try {
-      await loadCloudState();
-      if (!location.hash) location.hash = "#/today";
-      render();
-    } catch {
-      await cloud.auth.signOut();
-      currentUser = null;
-      renderAuth("账号已登录，但读取学习进度失败。请检查网络或数据库配置。");
-    }
+    await enterCourse();
   }
   async function signOut() {
-    await syncStateNow();
+    if (entitlementDecision.allowed) await syncStateNow();
     try { await cloud.auth.signOut(); } catch {}
     clearTimeout(syncTimer);
     currentUser = null;
+    currentEntitlement = null;
+    entitlementDecision = {allowed:false, reason:"missing", entitlement:null};
     state = defaultState();
     syncStatus = "idle";
     syncPending = false;
     renderAuth();
   }
   async function bootstrap() {
-    if (!cloudConfigured || !window.supabase?.createClient) { renderAuth(); return; }
+    if (!cloudConfigured || !window.supabase?.createClient || !ACCESS) { renderAuth(); return; }
     cloud = window.supabase.createClient(CLOUD_CONFIG.url,CLOUD_CONFIG.publishableKey,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
     const {data,error} = await cloud.auth.getSession();
     if (error || !data.session?.user) { renderAuth(error ? "无法检查登录状态，请刷新后重试。" : ""); return; }
     currentUser = data.session.user;
-    try {
-      await loadCloudState();
-      if (!location.hash) location.hash = "#/today";
-      render();
-    } catch {
-      currentUser = null;
-      renderAuth("读取学习进度失败，请检查网络或数据库配置。");
-    }
+    await enterCourse();
   }
 
   function navItems() {
-    const current = dayById(state.currentDay);
+    const current = suggestedDay();
     const availableTests = DATA.days.filter(day => day.test && day.day <= current.day);
     const testDay = availableTests.at(-1) || DATA.days.find(day => day.test);
     return [
@@ -209,13 +246,13 @@
     const mobile = [["today","今日","home"],["bank","题库","bank"],["wrong","错题","wrong"],["record","记录","record"]].map(([route,label,iconName]) => `<button class="${active === route ? "active" : ""}" data-route="${route}">${icon(iconName)}<span>${label}</span></button>`).join("");
     return `<div class="mobile-top"><div class="brand">${icon("flask","brand-mark")}<span>果果的化学·30天通关</span></div><div class="mobile-top-actions">${syncStatusMarkup()}<button class="button ghost small" data-route="settings" aria-label="设置">${icon("menu")}</button><button class="button ghost small" data-action="logout">退出</button></div></div>
       <div class="app-shell"><aside class="sidebar"><div class="brand">${icon("flask","brand-mark")}<span>果果的化学<br>30天通关</span></div><nav class="nav" aria-label="主导航">${nav}</nav><div class="sidebar-bottom"><button class="nav-button" data-route="settings">${icon("settings")}<span>提醒与数据</span></button><div class="quiet-note">先把今天真正学懂，再向前走。不会做不是失败，是系统需要补课的信号。</div></div></aside>
-      <div class="main-wrap"><header class="topbar"><div class="topbar-actions">${syncStatusMarkup()}<span class="account-email" title="${esc(currentUser.email || "")}">${esc(currentUser.email || "")}</span><button class="button ghost" data-route="settings">${icon("settings")}提醒与数据</button><button class="button" data-route="parent/${activeDayId()}">${icon("users")}家长视图</button><button class="button ghost" data-action="logout">退出</button></div></header><main id="main">${content}</main></div></div>
+      <div class="main-wrap"><header class="topbar"><div class="topbar-actions"><span class="course-badge">完整30天课程 · 已开通</span>${syncStatusMarkup()}<span class="account-email" title="${esc(currentUser.email || "")}">${esc(currentUser.email || "")}</span><button class="button ghost" data-route="settings">${icon("settings")}提醒与数据</button><button class="button" data-route="parent/${activeDayId()}">${icon("users")}家长视图</button><button class="button ghost" data-action="logout">退出</button></div></header><main id="main">${content}</main></div></div>
       <nav class="mobile-nav" aria-label="移动端主导航">${mobile}</nav>`;
   }
 
   function activeDayId() {
     const route = parseRoute();
-    return route.parts.find(part => /^day\d{2}$/.test(part)) || (dayById(state.currentDay).id);
+    return route.parts.find(part => /^day\d{2}$/.test(part)) || suggestedDay().id;
   }
   function parseRoute() {
     const raw = (location.hash || "#/today").replace(/^#\/?/, "");
@@ -233,8 +270,16 @@
   }
 
   function renderToday() {
-    let day = dayById(state.currentDay);
-    if (!DATA.days.some(item => item.id === state.currentDay)) day = DATA.days[0];
+    const plan = planStatus();
+    const day = suggestedDay();
+    const startDate = currentEntitlement?.plan_start_date || "";
+    const planCopy = plan.phase === "upcoming"
+      ? `<strong>你的30天学习计划将在 ${esc(startDate)} 开始。</strong><span>完整课程已经解锁，你可以提前预习。</span>`
+      : plan.phase === "completed"
+        ? `<strong>已完成30天学习计划</strong><span>学习计划开始：${esc(startDate)} · 今日建议保持 Day30，完整课程可长期回看。</span>`
+        : plan.phase === "active"
+          ? `<strong>完整30天课程 · 已开通</strong><span>学习计划开始：${esc(startDate)} · 今日建议：Day${String(day.day).padStart(2,"0")}</span>`
+          : `<strong>完整30天课程 · 已开通</strong><span>暂时无法读取学习计划开始日期，请联系管理员。</span>`;
     const stats = completion(day);
     const steps = [
       ["课本与教材帮", day.reading[0], taskDone(day.id,0)], ["分段讲解", "按小节学完，边学边做随堂题", taskDone(day.id,1)],
@@ -252,7 +297,7 @@
     const due = dueWrong();
     const dueHtml = due.length ? due.slice(0,4).map(item => { const q = questionById(item.questionId); return `<div class="due-item"><p>${esc(q?.question || item.questionId)}</p><div class="meta"><span>${esc(item.reason)}</span><span class="attention">今天到期</span></div></div>`; }).join("") + `<button class="button ghost small" data-route="wrong">查看全部错题 ${icon("arrow")}</button>` : `<div class="empty"><p>今天没有到期错题。</p></div>`;
     const route = DATA.route.map(item => `<div class="route-day ${item.ready ? "ready" : ""} ${item.id === day.id ? "today" : ""}"><div class="route-circle">${String(item.day).padStart(2,"0")}</div><b>${esc(item.title)}</b></div>`).join("");
-    const content = `<div class="page"><section class="hero"><div class="hero-copy"><h1>Day ${String(day.day).padStart(2,"0")} ${esc(day.title)}</h1><p class="lead">${esc(day.goal)}</p><button class="button primary" data-route="lesson/${day.id}">${icon("book")}开始今天的学习</button></div><div class="hero-art"><img src="assets/lab-illustration.png" alt="试管、烧瓶和学习笔记组成的化学学习插画"></div></section>
+    const content = `<div class="page"><div class="plan-banner">${planCopy}</div><section class="hero"><div class="hero-copy"><h1>Day ${String(day.day).padStart(2,"0")} ${esc(day.title)}</h1><p class="lead">${esc(day.goal)}</p><button class="button primary" data-route="lesson/${day.id}">${icon("book")}${plan.phase === "upcoming" ? "提前预习 Day01" : "开始今天的学习"}</button></div><div class="hero-art"><img src="assets/lab-illustration.png" alt="试管、烧瓶和学习笔记组成的化学学习插画"></div></section>
       <div class="today-layout"><section><div class="section-title"><h2>今日学习流程</h2><p>${stats.tasks}/${stats.taskTotal}项任务完成</p></div><div class="learning-rail">${rail}</div><div class="section-title"><h2>每日任务清单</h2><p>做完一项，确认一项</p></div><div class="task-list">${taskList}</div><div class="section-title"><h2>30天通关路线图</h2><button class="button ghost small" data-route="map">查看完整路线</button></div><div class="route-strip">${route}</div></section>
       <aside class="side-column"><section class="side-panel"><h2>今日到期错题</h2>${dueHtml}</section><section class="side-panel"><h2>完成条件</h2><div class="completion-list"><div class="completion-item"><span class="status-dot ${stats.tasks === stats.taskTotal ? "ok" : ""}"></span><span>完成今日全部学习任务</span></div><div class="completion-item"><span class="status-dot ${stats.correct >= Math.ceil(stats.questionTotal*.85) ? "ok" : ""}"></span><span>练习正确至少${Math.ceil(stats.questionTotal*.85)}题</span></div><div class="completion-item"><span class="status-dot ${stats.verified ? "ok" : ""}"></span><span>完成家长口头验收</span></div></div></section></aside></div></div>`;
     app.innerHTML = shell(content, "today");
@@ -278,8 +323,6 @@
 
   function renderLesson(dayId) {
     const day = dayById(dayId);
-    state.currentDay = day.id;
-    saveState();
     const sectionIndex = Math.min(state.lessonSection[day.id] || 0, day.sections.length - 1);
     const questionIndex = Math.min(state.questionIndex[day.id] || 0, day.questions.length - 1);
     const section = day.sections[sectionIndex];
@@ -358,7 +401,7 @@
 
   function renderSettings() {
     const times = state.settings.times.map((time,index) => `<div class="time-row"><input class="input" type="time" value="${esc(time)}" data-time-index="${index}"><button class="button small danger" data-action="remove-time" data-index="${index}">删除</button></div>`).join("");
-    const content = `<div class="page narrow"><h1>提醒与数据</h1><div class="settings-grid"><section class="setting-block"><h2>学习提醒</h2><label class="completion-item"><input type="checkbox" id="reminder-enabled" ${state.settings.reminderEnabled ? "checked" : ""}>启用提醒时段</label><div id="time-list">${times}</div><button class="button small" data-action="add-time">添加时段</button><p class="meta">网页关闭后由iPhone日历负责提醒；网站本身不申请推送权限。</p><button class="button" data-action="calendar">${icon("download")}生成日历提醒文件</button></section><section class="setting-block"><h2>云端同步与备份</h2><p>登录账号后，电脑与移动设备会自动读取同一份学习进度。请等待顶部显示“已保存”后再关闭网页。</p><div style="display:flex;gap:10px;flex-wrap:wrap"><button class="button" data-action="export">${icon("download")}导出进度</button><label class="button">${icon("upload")}导入进度<input class="file-input" id="import-file" type="file" accept="application/json"></label></div></section><section class="setting-block"><h2>重置</h2><p>只在需要从头开始时使用。此操作会清除当前账号的答案和错题记录，并同步到云端。</p><button class="button danger" data-action="reset">重置当前账号进度</button></section></div></div>`;
+    const content = `<div class="page narrow"><h1>提醒与数据</h1><div class="settings-grid"><section class="setting-block"><h2>课程与学习计划</h2><p><strong>完整30天课程 · 已开通</strong></p><p>学习计划开始：${esc(currentEntitlement?.plan_start_date || "尚未设置")}</p><p class="meta">开始日期只决定每日学习建议和日历提醒；Day01–Day30始终全部可访问。</p></section><section class="setting-block"><h2>学习提醒</h2><label class="completion-item"><input type="checkbox" id="reminder-enabled" ${state.settings.reminderEnabled ? "checked" : ""}>启用提醒时段</label><div id="time-list">${times}</div><button class="button small" data-action="add-time">添加时段</button><p class="meta">网页关闭后由iPhone日历负责提醒；网站本身不申请推送权限。</p><button class="button" data-action="calendar">${icon("download")}生成日历提醒文件</button></section><section class="setting-block"><h2>云端同步与备份</h2><p>登录账号后，电脑与移动设备会自动读取同一份学习进度。请等待顶部显示“已保存”后再关闭网页。</p><div style="display:flex;gap:10px;flex-wrap:wrap"><button class="button" data-action="export">${icon("download")}导出进度</button><label class="button">${icon("upload")}导入进度<input class="file-input" id="import-file" type="file" accept="application/json"></label></div></section><section class="setting-block"><h2>重置</h2><p>只在需要从头开始时使用。此操作会清除当前账号的答案和错题记录，并同步到云端。</p><button class="button danger" data-action="reset">重置当前账号进度</button></section></div></div>`;
     app.innerHTML = shell(content, "settings");
   }
 
@@ -412,19 +455,22 @@
   }
   function calendarFile() {
     if (!state.settings.reminderEnabled || !state.settings.times.length) { notify("请先启用并设置至少一个提醒时间。"); return; }
+    const dates = ACCESS.calendarDates(currentEntitlement?.plan_start_date);
+    if (dates.length !== 30) { notify("学习计划开始日期尚未设置，无法生成日历提醒。"); return; }
     const events = [];
     for (let day=0; day<30; day += 1) for (const time of state.settings.times) {
-      const date = addDays(DATA.startDate,day).replace(/-/g,""); const compact = time.replace(":","");
-      events.push(["BEGIN:VEVENT",`UID:guoguo-chem-${day}-${compact}@local`,`DTSTART:${date}T${compact}00`,`DTEND:${date}T${compact}00`,`SUMMARY:果果的化学 Day ${String(day+1).padStart(2,"0")}`,`DESCRIPTION:${DATA.route[day].title}。打开学习网站完成今天的学练闭环。`,"END:VEVENT"].join("\r\n"));
+      const date = dates[day].replace(/-/g,""); const compact = time.replace(":","");
+      events.push(["BEGIN:VEVENT",`UID:guoguo-chem-${currentUser.id}-${day}-${compact}@local`,`DTSTART:${date}T${compact}00`,`DTEND:${date}T${compact}00`,`SUMMARY:果果的化学 Day ${String(day+1).padStart(2,"0")}`,`DESCRIPTION:${DATA.route[day].title}。打开学习网站完成今天的学练闭环。`,"END:VEVENT"].join("\r\n"));
     }
     const ics = `BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Guoguo Chemistry//CN\r\n${events.join("\r\n")}\r\nEND:VCALENDAR`;
     const blob = new Blob([ics],{type:"text/calendar;charset=utf-8"}); const link=document.createElement("a");link.href=URL.createObjectURL(blob);link.download="果果的化学30天提醒.ics";link.click();URL.revokeObjectURL(link.href);notify("日历提醒文件已生成。");
   }
 
   function changeQuestion(delta) {
-    const route = parseRoute(); const day = dayById(route.parts[1] || state.currentDay); const isTest = route.parts[0] === "test"; const key = isTest ? `test:${day.id}` : day.id; const ids = isTest ? (day.test || []) : day.questions; state.questionIndex[key] = Math.max(0, Math.min(ids.length-1,(state.questionIndex[key]||0)+delta)); saveState(); render();
+    const route = parseRoute(); const day = dayById(route.parts[1] || suggestedDay().id); const isTest = route.parts[0] === "test"; const key = isTest ? `test:${day.id}` : day.id; const ids = isTest ? (day.test || []) : day.questions; state.questionIndex[key] = Math.max(0, Math.min(ids.length-1,(state.questionIndex[key]||0)+delta)); saveState(); render();
   }
   function render() {
+    if (!refreshEntitlementDecision()) return renderEntitlementStatus();
     const route = parseRoute(); const [page, id] = route.parts;
     if (page === "lesson") return renderLesson(id);
     if (page === "practice") return renderPractice(id, route.query.get("question"));
@@ -440,9 +486,12 @@
 
   app.addEventListener("click", event => {
     if (!currentUser) return;
+    const actionTarget = event.target.closest("[data-action]");
+    if (actionTarget?.dataset.action === "logout") { signOut(); return; }
+    if (!refreshEntitlementDecision()) { renderEntitlementStatus(); return; }
     const routeTarget = event.target.closest("[data-route]");
     if (routeTarget) { location.hash = `#/${routeTarget.dataset.route}`; return; }
-    const actionTarget = event.target.closest("[data-action]"); if (!actionTarget) return;
+    if (!actionTarget) return;
     const {action,id,day,index} = actionTarget.dataset;
     if (action === "submit-answer") submitAnswer(id);
     else if (action === "unknown") markUnknown(id);
@@ -455,7 +504,6 @@
     else if (action === "oral-toggle") { const key=`${day}:${index}`; state.oralOpen[key]=!state.oralOpen[key]; saveState(); render(); }
     else if (action === "toggle-task") { const key=`${day}:${index}`; state.tasks[key]=!state.tasks[key]; saveState(); render(); }
     else if (action === "parent-verify") { state.parentVerified[day]=true; saveState(); notify("已记录家长验收。"); render(); }
-    else if (action === "logout") signOut();
     else if (action === "export") exportState();
     else if (action === "calendar") calendarFile();
     else if (action === "add-time") { state.settings.times.push("16:00"); saveState(); render(); }

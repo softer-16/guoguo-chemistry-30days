@@ -2,6 +2,13 @@
 
 面向零基础九年级学生的化学学习网站。现已开放 Day 01–Day 30，包含每天30题、分段讲解、滚动检测、四套综合模拟、提示阶梯、错题复习、家长验收、账号登录和跨设备学习记录，共900题。
 
+## 商业产品路线
+
+- 当前商品是 Day 01–Day 30 完整课程，一次性买断，不采用订阅或分阶段二次收费。
+- 有效授权生效后，Day 01–Day 30 全部立即开放；学习计划日期不限制课程访问。
+- `plan_start_date` 只用于首页今日建议、30天时间轴和日历提醒。
+- 当前阶段由管理员人工创建账号并授予课程权限，不包含支付或管理员后台。
+
 ## 在线访问
 
 <https://softer-16.github.io/guoguo-chemistry-30days/>
@@ -23,7 +30,7 @@ python -m http.server 4173
 1. 在 Supabase 创建项目。
 2. 打开 SQL Editor，执行 [`supabase/schema.sql`](supabase/schema.sql)。
 3. 在 Authentication 设置中关闭公开注册。第一阶段由管理员创建或邀请用户。
-4. 在 Authentication 的 Users 页面创建妹妹的邮箱账号。
+4. 在 Authentication 的 Users 页面创建购买用户的家长邮箱账号。
 5. 在项目设置的 API 页面复制 Project URL 和 publishable key，填入 `config.js`：
 
 ```js
@@ -36,6 +43,33 @@ window.CHEM_SUPABASE_CONFIG = {
 `publishableKey` 可以出现在前端。不要把 `service_role` 密钥或 Supabase 登录密码写入仓库。
 
 数据库启用了行级安全策略：登录用户只能读取和修改 `user_id` 等于自己账号 ID 的学习档案。
+
+执行Schema后，管理员在SQL Editor中为已购买用户授予完整课程权限。把示例UUID和日期替换为实际值：
+
+```sql
+insert into public.course_entitlements (
+  user_id,
+  course_id,
+  status,
+  plan_start_date,
+  expires_at
+) values (
+  '00000000-0000-0000-0000-000000000000',
+  'guoguo-chemistry-30days',
+  'active',
+  '2026-08-23',
+  null
+)
+on conflict (user_id, course_id) do update
+set status = excluded.status,
+    plan_start_date = excluded.plan_start_date,
+    expires_at = excluded.expires_at,
+    updated_at = now();
+```
+
+普通浏览器用户只能读取自己的授权，不能新增、修改或删除授权。删除Auth用户时，其课程授权会随账号删除，但不会影响其他用户或现有 `user_progress` 表结构。
+
+> 当前课程正文仍位于公开静态JavaScript文件。授权检查建立了产品行为基础，但在课程数据迁入受RLS保护的数据层之前，不能阻止匿名下载课程文件。
 
 ## 首次登录与同步规则
 
@@ -77,3 +111,12 @@ Cloudflare Pages 使用当前 GitHub 仓库时：
 - 学习记录按用户保存在 Supabase，并在当前设备保留账号隔离的缓存。
 - 网站不包含教材或教辅扫描页。
 - 知识讲解与题目依据人教版九年级上册课程范围重新组织，题目为原创或改编表达。
+
+## 商业化开发任务顺序
+
+1. 完整30天买断授权与用户独立学习计划日期。
+2. 课程正文从公开静态JavaScript迁移至受Supabase RLS保护的数据层。
+3. 云端与本地同步可靠性修复。
+4. 练习与检测状态隔离及首发体验打磨。
+5. 正式托管迁移、仓库Private、安全与真机验收。
+6. 闲鱼商品包装、定价、首图、详情页、FAQ与正式上线。
