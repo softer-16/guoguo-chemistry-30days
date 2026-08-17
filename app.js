@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const DATA = window.CHEM_DATA;
+  let DATA = null;
   const ACCESS = window.CHEM_ENTITLEMENT;
   const LEGACY_STORAGE_KEY = "guoguo-chemistry-progress-v1";
   const CLOUD_CONFIG = window.CHEM_SUPABASE_CONFIG || {};
@@ -46,7 +46,7 @@
 
   function defaultState() {
     return {
-      version: DATA.version,
+      version: DATA?.version || "unloaded",
       tasks: {}, answers: {}, wrong: {}, parentVerified: {},
       lessonSection: {}, questionIndex: {}, hints: {}, oralOpen: {},
       settings: { reminderEnabled: true, times: ["10:30"] }
@@ -145,6 +145,25 @@
     entitlementDecision = ACCESS.evaluateEntitlement(currentEntitlement);
     return entitlementDecision;
   }
+  function validateCourseData(data) {
+    if (!data || !Array.isArray(data.days) || data.days.length !== 30 || !Array.isArray(data.questions) || data.questions.length !== 900 || !Array.isArray(data.route) || data.route.length !== 30) throw new Error("课程数据不完整");
+    const questionIds = new Set(data.questions.map(question => question.id));
+    if (questionIds.size !== 900) throw new Error("课程题目 ID 不完整");
+    data.days.forEach((day, index) => {
+      if (day.id !== `day${String(index + 1).padStart(2,"0")}` || day.day !== index + 1 || !Array.isArray(day.questions) || day.questions.length !== 30) throw new Error("课程天数数据不完整");
+      [...day.questions, ...(day.test || [])].forEach(id => { if (!questionIds.has(id)) throw new Error("课程题目引用不完整"); });
+    });
+    return data;
+  }
+  async function loadCourseContent() {
+    const {data,error} = await cloud.from("course_contents")
+      .select("content_version,payload,checksum,updated_at")
+      .eq("course_id", ACCESS.COURSE_ID)
+      .maybeSingle();
+    if (error || !data?.payload) throw new Error("无法读取课程内容");
+    DATA = validateCourseData(data.payload);
+    return data;
+  }
   function planStatus() {
     return ACCESS.learningPlanStatus(currentEntitlement?.plan_start_date);
   }
@@ -167,6 +186,9 @@
     const [title,message] = entitlementMessage(entitlementDecision.reason);
     app.innerHTML = `<main id="main" class="auth-page"><div class="auth-shell"><section class="auth-intro"><div class="brand">${icon("flask","brand-mark")}<span>果果的化学<br>30天通关</span></div><h1>完整30天课程，一次开通长期学习。</h1><p>课程授权与30天学习计划进度相互独立。</p></section><section class="auth-card"><h2>${esc(title)}</h2><p>${esc(message)}</p><div class="setup-note">当前登录账号：${esc(currentUser?.email || "")}</div><button class="button" type="button" data-action="logout">退出当前账号</button></section></div></main>`;
   }
+  function renderCourseUnavailable() {
+    app.innerHTML = `<main id="main" class="auth-page"><div class="auth-shell"><section class="auth-intro"><div class="brand">${icon("flask","brand-mark")}<span>果果的化学<br>30天通关</span></div><h1>完整30天课程，一次开通长期学习。</h1><p>课程内容会在授权确认后安全读取。</p></section><section class="auth-card"><h2>暂时无法读取课程内容</h2><p>请检查网络后刷新页面；如持续出现，请联系管理员。</p><div class="setup-note">当前登录账号：${esc(currentUser?.email || "")}</div><button class="button" type="button" data-action="logout">退出当前账号</button></section></div></main>`;
+  }
   async function enterCourse() {
     try {
       await loadCourseEntitlement();
@@ -178,6 +200,13 @@
     }
     if (!entitlementDecision.allowed) { renderEntitlementStatus(); return; }
     try {
+      await loadCourseContent();
+    } catch {
+      DATA = null;
+      renderCourseUnavailable();
+      return;
+    }
+    try {
       await loadCloudState();
       if (!location.hash) location.hash = "#/today";
       render();
@@ -185,8 +214,9 @@
       await cloud.auth.signOut();
       currentUser = null;
       currentEntitlement = null;
+      DATA = null;
       entitlementDecision = {allowed:false, reason:"missing", entitlement:null};
-      renderAuth("账号已授权，但读取学习进度失败。请检查网络或数据库配置。");
+      renderAuth("账号已授权，课程内容可读取，但学习进度读取失败。请检查网络或数据库配置。");
     }
   }
   function renderAuth(errorMessage = "") {
@@ -217,6 +247,7 @@
     clearTimeout(syncTimer);
     currentUser = null;
     currentEntitlement = null;
+    DATA = null;
     entitlementDecision = {allowed:false, reason:"missing", entitlement:null};
     state = defaultState();
     syncStatus = "idle";

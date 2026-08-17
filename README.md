@@ -69,7 +69,21 @@ set status = excluded.status,
 
 普通浏览器用户只能读取自己的授权，不能新增、修改或删除授权。删除Auth用户时，其课程授权会随账号删除，但不会影响其他用户或现有 `user_progress` 表结构。
 
-> 当前课程正文仍位于公开静态JavaScript文件。授权检查建立了产品行为基础，但在课程数据迁入受RLS保护的数据层之前，不能阻止匿名下载课程文件。
+## 课程正文保护与私有导入
+
+课程正文、900题、答案和提示不再作为公开静态 JavaScript 文件发布。有效授权用户登录后，前端才从 `course_contents` 读取完整课程；RLS 会同时检查自己的同课程授权为 `active` 且未过期。`plan_start_date` 不参与此检查，因此 Day01–Day30 始终一次性开放。
+
+新项目直接执行 [`supabase/schema.sql`](supabase/schema.sql)。已有 Task01 项目只执行 [`supabase/migrations/20260817_add_course_contents.sql`](supabase/migrations/20260817_add_course_contents.sql)。两者都只创建表、约束和 RLS，不包含任何课程正文。
+
+课程内容必须从受控的本地数据副本生成一次性导入 SQL，生成结果应放在 Git 忽略的 `private/` 目录。以下命令只生成本地文件，不会连接 Supabase：
+
+```powershell
+node scripts/prepare-course-content-import.js --source <受控旧数据目录> --output private/course-content-import.sql
+```
+
+脚本会校验30天、900题、题目 ID 和所有题目引用，并输出 SHA-256 checksum。只有在负责人明确确认线上数据库操作后，才能将该私有 SQL 导入 Supabase SQL Editor。不得把导入 SQL、课程 JSON、`service_role` 或数据库密码提交到仓库。
+
+回滚文件为 [`supabase/rollbacks/20260817_remove_course_contents.sql`](supabase/rollbacks/20260817_remove_course_contents.sql)。它会删除课程内容表，必须先回滚前端且取得明确确认后才能执行。
 
 ## 首次登录与同步规则
 
