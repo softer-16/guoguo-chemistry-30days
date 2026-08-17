@@ -44,6 +44,22 @@ create table if not exists public.course_entitlements (
     check (status in ('active', 'suspended', 'revoked'))
 );
 
+create or replace function public.set_course_entitlements_updated_at()
+returns trigger
+language plpgsql
+set search_path = ''
+as $function$
+begin
+  new.updated_at = pg_catalog.now();
+  return new;
+end
+$function$;
+
+create or replace trigger course_entitlements_set_updated_at
+before update on public.course_entitlements
+for each row
+execute function public.set_course_entitlements_updated_at();
+
 alter table public.course_entitlements enable row level security;
 
 drop policy if exists "Users can read own course entitlement" on public.course_entitlements;
