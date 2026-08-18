@@ -6,6 +6,8 @@
   const LEGACY_STORAGE_KEY = "guoguo-chemistry-progress-v1";
   const CLOUD_CONFIG = window.CHEM_SUPABASE_CONFIG || {};
   const cloudConfigured = Boolean(CLOUD_CONFIG.url && CLOUD_CONFIG.publishableKey && !CLOUD_CONFIG.url.includes("YOUR_") && !CLOUD_CONFIG.publishableKey.includes("YOUR_"));
+  const authCallbackParams = new URLSearchParams(`${location.search.replace(/^\?/, "")}&${location.hash.replace(/^#/, "")}`);
+  let invitePasswordSetupRequested = authCallbackParams.get("type") === "invite";
   const REVIEW_INTERVALS = [0, 1, 3, 7];
   const app = document.getElementById("app");
   const toast = document.getElementById("toast");
@@ -221,7 +223,10 @@
   }
   function renderAuth(errorMessage = "") {
     const unavailable = !cloudConfigured ? "云端服务尚未配置。请先按照 README 填写 config.js。" : !window.supabase?.createClient ? "登录组件加载失败，请检查网络后刷新页面。" : !ACCESS ? "课程授权组件加载失败，请刷新页面。" : "";
-    app.innerHTML = `<main id="main" class="auth-page"><div class="auth-shell"><section class="auth-intro"><div class="brand">${icon("flask","brand-mark")}<span>果果的化学<br>30天通关</span></div><h1>每天学懂一点，进度一直都在。</h1><p>登录后，Safari 和 Edge 会读取同一份学习记录。</p></section><section class="auth-card"><h2>登录学习账号</h2><p>使用家长管理的邮箱和密码登录。</p>${unavailable ? `<div class="setup-note">${esc(unavailable)}</div>` : ""}${errorMessage ? `<div class="auth-error" role="alert">${esc(errorMessage)}</div>` : ""}<form class="auth-form" id="login-form"><label class="auth-field">邮箱<input type="email" name="email" autocomplete="username" required ${unavailable ? "disabled" : ""}></label><label class="auth-field">密码<input type="password" name="password" autocomplete="current-password" required ${unavailable ? "disabled" : ""}></label><button class="button primary" type="submit" ${unavailable ? "disabled" : ""}>登录并读取学习进度</button></form></section></div></main>`;
+    app.innerHTML = `<main id="main" class="auth-page"><div class="auth-shell"><section class="auth-intro"><div class="brand">${icon("flask","brand-mark")}<span>果果的化学<br>30天通关</span></div><h1>每天学懂一点，进度一直都在。</h1><p>登录后，Safari 和 Edge 会读取同一份学习记录。</p></section><section class="auth-card"><h2>已开通用户登录</h2><p>本课程采用邀请制，不开放自主注册。请使用开通时登记的邮箱和密码登录。</p>${unavailable ? `<div class="setup-note">${esc(unavailable)}</div>` : ""}${errorMessage ? `<div class="auth-error" role="alert">${esc(errorMessage)}</div>` : ""}<form class="auth-form" id="login-form"><label class="auth-field">邮箱<input type="email" name="email" autocomplete="username" required ${unavailable ? "disabled" : ""}></label><label class="auth-field">密码<input type="password" name="password" autocomplete="current-password" required ${unavailable ? "disabled" : ""}></label><button class="button primary" type="submit" ${unavailable ? "disabled" : ""}>登录课程</button></form><p class="meta">尚未开通或无法登录？请通过购买平台联系商家，并提供当前登录邮箱。</p></section></div></main>`;
+  }
+  function renderInvitePasswordSetup(errorMessage = "") {
+    app.innerHTML = `<main id="main" class="auth-page"><div class="auth-shell"><section class="auth-intro"><div class="brand">${icon("flask","brand-mark")}<span>果果的化学<br>30天通关</span></div><h1>欢迎进入课程。</h1><p>请先设置登录密码；之后可用邮箱和密码在任意设备登录。</p></section><section class="auth-card"><h2>设置登录密码</h2><p>当前账号：${esc(currentUser?.email || "")}</p>${errorMessage ? `<div class="auth-error" role="alert">${esc(errorMessage)}</div>` : ""}<form class="auth-form" id="invite-password-form"><label class="auth-field">设置密码<input type="password" name="password" autocomplete="new-password" minlength="8" required></label><label class="auth-field">确认密码<input type="password" name="passwordConfirm" autocomplete="new-password" minlength="8" required></label><button class="button primary" type="submit">保存密码并进入课程</button></form></section></div></main>`;
   }
   async function signIn(form) {
     const button = form.querySelector('button[type="submit"]');
@@ -239,6 +244,24 @@
     }
     if (error || !data.user) { renderAuth("邮箱或密码不正确，请检查后重试。"); return; }
     currentUser = data.user;
+    await enterCourse();
+  }
+  async function completeInvitePassword(form) {
+    const button = form.querySelector('button[type="submit"]');
+    const password = form.elements.password.value;
+    const passwordConfirm = form.elements.passwordConfirm.value;
+    if (password !== passwordConfirm) { renderInvitePasswordSetup("两次输入的密码不一致，请重新填写。"); return; }
+    button.disabled = true;
+    button.textContent = "正在保存…";
+    let error;
+    try {
+      ({error} = await cloud.auth.updateUser({password}));
+    } catch {
+      error = true;
+    }
+    if (error) { renderInvitePasswordSetup("密码保存失败，请检查密码要求后重试。"); return; }
+    invitePasswordSetupRequested = false;
+    history.replaceState({}, document.title, `${location.pathname}${location.search}`);
     await enterCourse();
   }
   async function signOut() {
@@ -260,6 +283,7 @@
     const {data,error} = await cloud.auth.getSession();
     if (error || !data.session?.user) { renderAuth(error ? "无法检查登录状态，请刷新后重试。" : ""); return; }
     currentUser = data.session.user;
+    if (invitePasswordSetupRequested) { renderInvitePasswordSetup(); return; }
     await enterCourse();
   }
 
@@ -548,6 +572,11 @@
     if (event.target.matches("[data-time-index]")) { state.settings.times[Number(event.target.dataset.timeIndex)]=event.target.value;saveState(); }
   });
   app.addEventListener("submit", event => {
+    if (event.target.id === "invite-password-form") {
+      event.preventDefault();
+      completeInvitePassword(event.target);
+      return;
+    }
     if (event.target.id !== "login-form") return;
     event.preventDefault();
     signIn(event.target);
