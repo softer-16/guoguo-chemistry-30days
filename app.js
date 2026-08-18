@@ -6,8 +6,6 @@
   const LEGACY_STORAGE_KEY = "guoguo-chemistry-progress-v1";
   const CLOUD_CONFIG = window.CHEM_SUPABASE_CONFIG || {};
   const cloudConfigured = Boolean(CLOUD_CONFIG.url && CLOUD_CONFIG.publishableKey && !CLOUD_CONFIG.url.includes("YOUR_") && !CLOUD_CONFIG.publishableKey.includes("YOUR_"));
-  const inviteCallback = window.CHEM_INVITE_CALLBACK?.parseInviteCallback(location.href) || {type:"none"};
-  let invitePasswordSetupRequested = inviteCallback.type !== "none";
   const REVIEW_INTERVALS = [0, 1, 3, 7];
   const app = document.getElementById("app");
   const toast = document.getElementById("toast");
@@ -223,10 +221,11 @@
   }
   function renderAuth(errorMessage = "") {
     const unavailable = !cloudConfigured ? "云端服务尚未配置。请先按照 README 填写 config.js。" : !window.supabase?.createClient ? "登录组件加载失败，请检查网络后刷新页面。" : !ACCESS ? "课程授权组件加载失败，请刷新页面。" : "";
-    app.innerHTML = `<main id="main" class="auth-page"><div class="auth-shell"><section class="auth-intro"><div class="brand">${icon("flask","brand-mark")}<span>果果的化学<br>30天通关</span></div><h1>每天学懂一点，进度一直都在。</h1><p>登录后，Safari 和 Edge 会读取同一份学习记录。</p></section><section class="auth-card"><h2>已开通用户登录</h2><p>本课程采用邀请制，不开放自主注册。请使用开通时登记的邮箱和密码登录。</p>${unavailable ? `<div class="setup-note">${esc(unavailable)}</div>` : ""}${errorMessage ? `<div class="auth-error" role="alert">${esc(errorMessage)}</div>` : ""}<form class="auth-form" id="login-form"><label class="auth-field">邮箱<input type="email" name="email" autocomplete="username" required ${unavailable ? "disabled" : ""}></label><label class="auth-field">密码<input type="password" name="password" autocomplete="current-password" required ${unavailable ? "disabled" : ""}></label><button class="button primary" type="submit" ${unavailable ? "disabled" : ""}>登录课程</button></form><p class="meta">尚未开通或无法登录？请通过购买平台联系商家，并提供当前登录邮箱。</p></section></div></main>`;
+    app.innerHTML = `<main id="main" class="auth-page"><div class="auth-shell"><section class="auth-intro"><div class="brand">${icon("flask","brand-mark")}<span>果果的化学<br>30天通关</span></div><h1>每天学懂一点，进度一直都在。</h1><p>登录后，Safari 和 Edge 会读取同一份学习记录。</p></section><section class="auth-card"><h2>登录学习账号</h2><p>请使用已注册的邮箱和密码登录。</p>${unavailable ? `<div class="setup-note">${esc(unavailable)}</div>` : ""}${errorMessage ? `<div class="auth-error" role="alert">${esc(errorMessage)}</div>` : ""}<form class="auth-form" id="login-form"><label class="auth-field">邮箱<input type="email" name="email" autocomplete="username" required ${unavailable ? "disabled" : ""}></label><label class="auth-field">密码<input type="password" name="password" autocomplete="current-password" required ${unavailable ? "disabled" : ""}></label><button class="button primary" type="submit" ${unavailable ? "disabled" : ""}>登录课程</button></form><p class="meta">还没有账号？<button class="button ghost small" type="button" data-action="show-signup">创建账号</button></p><p class="meta">已付款但尚未开通？请通过购买平台联系商家，并提供注册邮箱。</p></section></div></main>`;
   }
-  function renderInvitePasswordSetup(errorMessage = "") {
-    app.innerHTML = `<main id="main" class="auth-page"><div class="auth-shell"><section class="auth-intro"><div class="brand">${icon("flask","brand-mark")}<span>果果的化学<br>30天通关</span></div><h1>欢迎进入课程。</h1><p>请先设置登录密码；之后可用邮箱和密码在任意设备登录。</p></section><section class="auth-card"><h2>设置登录密码</h2><p>当前账号：${esc(currentUser?.email || "")}</p>${errorMessage ? `<div class="auth-error" role="alert">${esc(errorMessage)}</div>` : ""}<form class="auth-form" id="invite-password-form"><label class="auth-field">设置密码<input type="password" name="password" autocomplete="new-password" minlength="8" required></label><label class="auth-field">确认密码<input type="password" name="passwordConfirm" autocomplete="new-password" minlength="8" required></label><button class="button primary" type="submit">保存密码并进入课程</button></form></section></div></main>`;
+  function renderSignup(errorMessage = "", successMessage = "") {
+    const unavailable = !cloudConfigured ? "云端服务尚未配置。请先按照 README 填写 config.js。" : !window.supabase?.createClient ? "登录组件加载失败，请检查网络后刷新页面。" : "";
+    app.innerHTML = `<main id="main" class="auth-page"><div class="auth-shell"><section class="auth-intro"><div class="brand">${icon("flask","brand-mark")}<span>果果的化学<br>30天通关</span></div><h1>先创建学习账号。</h1><p>账号创建后可在手机和电脑使用同一份学习记录。</p></section><section class="auth-card"><h2>创建账号</h2><p>请使用常用邮箱注册，并设置登录密码。</p>${unavailable ? `<div class="setup-note">${esc(unavailable)}</div>` : ""}${successMessage ? `<div class="setup-note">${esc(successMessage)}</div>` : ""}${errorMessage ? `<div class="auth-error" role="alert">${esc(errorMessage)}</div>` : ""}<form class="auth-form" id="signup-form"><label class="auth-field">邮箱<input type="email" name="email" autocomplete="email" required ${unavailable ? "disabled" : ""}></label><label class="auth-field">密码<input type="password" name="password" autocomplete="new-password" minlength="8" required ${unavailable ? "disabled" : ""}></label><label class="auth-field">确认密码<input type="password" name="passwordConfirm" autocomplete="new-password" minlength="8" required ${unavailable ? "disabled" : ""}></label><button class="button primary" type="submit" ${unavailable ? "disabled" : ""}>创建账号</button></form><p class="meta">注册后请完成邮箱确认；已付款用户请通过购买平台发送注册邮箱，等待开通。</p><p class="meta"><button class="button ghost small" type="button" data-action="show-login">返回登录</button></p></section></div></main>`;
   }
   async function signIn(form) {
     const button = form.querySelector('button[type="submit"]');
@@ -246,23 +245,24 @@
     currentUser = data.user;
     await enterCourse();
   }
-  async function completeInvitePassword(form) {
+  async function signUp(form) {
     const button = form.querySelector('button[type="submit"]');
+    const email = form.elements.email.value.trim();
     const password = form.elements.password.value;
     const passwordConfirm = form.elements.passwordConfirm.value;
-    if (password !== passwordConfirm) { renderInvitePasswordSetup("两次输入的密码不一致，请重新填写。"); return; }
+    if (password !== passwordConfirm) { renderSignup("两次输入的密码不一致，请重新填写。"); return; }
     button.disabled = true;
-    button.textContent = "正在保存…";
+    button.textContent = "正在创建…";
+    let data;
     let error;
     try {
-      ({error} = await cloud.auth.updateUser({password}));
+      ({data,error} = await cloud.auth.signUp({email,password}));
     } catch {
       error = true;
     }
-    if (error) { renderInvitePasswordSetup("密码保存失败，请检查密码要求后重试。"); return; }
-    invitePasswordSetupRequested = false;
-    history.replaceState({}, document.title, `${location.pathname}${location.search}`);
-    await enterCourse();
+    if (error || !data?.user) { renderSignup("账号创建失败，请检查邮箱和密码后重试。"); return; }
+    if (data.session) await cloud.auth.signOut();
+    renderSignup("", "账号已创建。请前往邮箱完成确认；已付款用户请通过购买平台发送注册邮箱，等待开通。");
   }
   async function signOut() {
     if (entitlementDecision.allowed) await syncStateNow();
@@ -281,9 +281,8 @@
     if (!cloudConfigured || !window.supabase?.createClient || !ACCESS) { renderAuth(); return; }
     cloud = window.supabase.createClient(CLOUD_CONFIG.url,CLOUD_CONFIG.publishableKey,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
     const {data,error} = await cloud.auth.getSession();
-    if (error || !data.session?.user) { renderAuth(invitePasswordSetupRequested ? "邀请链接无效或已过期，请通过购买平台联系商家重新发送邀请。" : error ? "无法检查登录状态，请刷新后重试。" : ""); return; }
+    if (error || !data.session?.user) { renderAuth(error ? "无法检查登录状态，请刷新后重试。" : ""); return; }
     currentUser = data.session.user;
-    if (invitePasswordSetupRequested) { renderInvitePasswordSetup(); return; }
     await enterCourse();
   }
 
@@ -540,8 +539,10 @@
   }
 
   app.addEventListener("click", event => {
-    if (!currentUser) return;
     const actionTarget = event.target.closest("[data-action]");
+    if (actionTarget?.dataset.action === "show-signup") { renderSignup(); return; }
+    if (actionTarget?.dataset.action === "show-login") { renderAuth(); return; }
+    if (!currentUser) return;
     if (actionTarget?.dataset.action === "logout") { signOut(); return; }
     if (!refreshEntitlementDecision()) { renderEntitlementStatus(); return; }
     const routeTarget = event.target.closest("[data-route]");
@@ -572,9 +573,9 @@
     if (event.target.matches("[data-time-index]")) { state.settings.times[Number(event.target.dataset.timeIndex)]=event.target.value;saveState(); }
   });
   app.addEventListener("submit", event => {
-    if (event.target.id === "invite-password-form") {
+    if (event.target.id === "signup-form") {
       event.preventDefault();
-      completeInvitePassword(event.target);
+      signUp(event.target);
       return;
     }
     if (event.target.id !== "login-form") return;

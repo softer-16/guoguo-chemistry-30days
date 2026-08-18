@@ -7,7 +7,7 @@
 - 当前商品是 Day 01–Day 30 完整课程，一次性买断，不采用订阅或分阶段二次收费。
 - 有效授权生效后，Day 01–Day 30 全部立即开放；学习计划日期不限制课程访问。
 - `plan_start_date` 只用于首页今日建议、30天时间轴和日历提醒。
-- 当前阶段采用邀请制手动开通：用户通过闲鱼订单消息联系商家，管理员发送 Supabase 邀请邮件并授予课程权限；不包含支付或管理员后台。
+- 当前阶段采用用户自主注册：用户创建并确认邮箱账号后，通过闲鱼订单消息发送注册邮箱；管理员再手动授予课程权限。不包含支付或管理员后台。
 
 ## 在线访问
 
@@ -29,8 +29,8 @@ python -m http.server 4173
 
 1. 在 Supabase 创建项目。
 2. 打开 SQL Editor，执行 [`supabase/schema.sql`](supabase/schema.sql)。
-3. 在 Authentication 设置中关闭公开注册。首发仅允许受邀用户登录。
-4. 在 Authentication 的 Users 页面选择 Add user → Send invitation，向购买用户的邮箱发送邀请。用户点击邮件链接后，会在网站设置自己的登录密码。
+3. 在 Authentication 设置中启用邮箱注册和邮箱确认。
+4. 已付款用户在网站创建并确认账号后，通过闲鱼订单消息发送注册邮箱；管理员在 SQL Editor 中为该账号授予课程权限。
 5. 在项目设置的 API 页面复制 Project URL 和 publishable key，填入 `config.js`：
 
 ```js
@@ -69,7 +69,7 @@ set status = excluded.status,
 
 普通浏览器用户只能读取自己的授权，不能新增、修改或删除授权。删除Auth用户时，其课程授权会随账号删除，但不会影响其他用户或现有 `user_progress` 表结构。
 
-邀请邮件会默认跳转至 Supabase Auth 的 Site URL；上线前必须将正式网站地址配置为 Site URL，并添加到 Redirect URLs。若链接过期，请在 Authentication → Users 中重新发送邀请。网页不写死个人联系方式；未开通用户统一通过闲鱼订单消息联系商家，并提供当前登录邮箱。
+邮箱确认邮件会默认跳转至 Supabase Auth 的 Site URL；上线前必须将正式网站地址配置为 Site URL，并添加到 Redirect URLs。网页不写死个人联系方式；未开通用户统一通过闲鱼订单消息联系商家，并提供注册邮箱。
 
 ## 课程正文保护与私有导入
 

@@ -1,6 +1,8 @@
 (() => {
   "use strict";
 
+  // TODO: Legacy invitation callback helper retained for history; it is no longer loaded by index.html.
+
   function parseInviteCallback(href) {
     const url = new URL(href, "https://example.invalid/");
     const hash = new URLSearchParams(url.hash.replace(/^#/, ""));
