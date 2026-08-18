@@ -17,9 +17,19 @@ test("登录页提供自主注册入口，未开通用户可按购买平台流�
 
 test("注册后提示邮箱确认与人工开通，且不自动进入课程", () => {
   assert.match(app, /id="signup-form"/);
-  assert.match(app, /注册后请完成邮箱确认；已付款用户请通过购买平台发送注册邮箱，等待开通/);
+  assert.match(app, /注册成功，确认邮件已发送至你的邮箱。请先点击邮件中的确认链接，再返回本页登录。/);
+  assert.match(app, /data-action="show-login"/);
   assert.match(app, /if \(data\.session\) await cloud\.auth\.signOut\(\);/);
-  assert.ok(app.indexOf("renderSignup(\"\", \"账号已创建") > app.indexOf("cloud.auth.signUp({email,password})"));
+  assert.ok(app.indexOf("renderSignup(\"\", \"注册成功") > app.indexOf("cloud.auth.signUp({email,password})"));
+});
+
+test("登录反馈区分未确认、凭据错误与暂时异常，且未授权仍是已登录状态", () => {
+  assert.match(app, /error\?\.code === "email_not_confirmed"/);
+  assert.match(app, /邮箱尚未确认，请先点击确认邮件中的链接/);
+  assert.match(app, /邮箱或密码不正确，请检查后重试/);
+  assert.match(app, /登录服务暂时异常，请稍后重试/);
+  assert.match(app, /你已登录，课程正在等待管理员开通/);
+  assert.ok(app.indexOf("if \(!entitlementDecision.allowed\) { renderEntitlementStatus\(\); return; }") < app.indexOf("await loadCourseContent()"));
 });
 
 test("邀请设密流程已从公开页面停用", () => {

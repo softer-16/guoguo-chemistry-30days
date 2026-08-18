@@ -181,7 +181,7 @@
     if (reason === "revoked") return ["课程授权已撤销", "当前账号不能继续访问课程。如有疑问，请联系管理员。"];
     if (reason === "expired") return ["课程授权已失效", "当前授权已超过有效期，请联系管理员核对。"];
     if (reason === "unavailable") return ["暂时无法检查课程授权", "请检查网络后刷新页面；如持续出现，请联系管理员。"];
-    return ["当前账号尚未开通果果化学30天课程", "如已购买，请联系管理员确认账号。"];
+    return ["当前账号尚未开通果果化学30天课程", "你已登录，课程正在等待管理员开通。如已付款，请通过购买平台发送注册邮箱。"];
   }
   function renderEntitlementStatus() {
     const [title,message] = entitlementMessage(entitlementDecision.reason);
@@ -228,6 +228,11 @@
     const unavailable = !cloudConfigured ? "云端服务尚未配置。请先按照 README 填写 config.js。" : !window.supabase?.createClient ? "登录组件加载失败，请检查网络后刷新页面。" : "";
     app.innerHTML = `<main id="main" class="auth-page"><div class="auth-shell"><section class="auth-intro"><div class="brand">${icon("flask","brand-mark")}<span>果果的化学<br>30天通关</span></div><h1>先创建学习账号。</h1><p>账号创建后可在手机和电脑使用同一份学习记录。</p></section><section class="auth-card"><h2>创建账号</h2><p>请使用常用邮箱注册，并设置登录密码。</p>${unavailable ? `<div class="setup-note">${esc(unavailable)}</div>` : ""}${successMessage ? `<div class="setup-note">${esc(successMessage)}</div>` : ""}${errorMessage ? `<div class="auth-error" role="alert">${esc(errorMessage)}</div>` : ""}<form class="auth-form" id="signup-form"><label class="auth-field">邮箱<input type="email" name="email" autocomplete="email" required ${unavailable ? "disabled" : ""}></label><label class="auth-field">密码<input type="password" name="password" autocomplete="new-password" minlength="8" required ${unavailable ? "disabled" : ""}></label><label class="auth-field">确认密码<input type="password" name="passwordConfirm" autocomplete="new-password" minlength="8" required ${unavailable ? "disabled" : ""}></label><button class="button primary" type="submit" ${unavailable ? "disabled" : ""}>创建账号</button></form><p class="meta">注册后请完成邮箱确认；已付款用户请通过购买平台发送注册邮箱，等待开通。</p><p class="meta"><button class="button ghost small" type="button" data-action="show-login">返回登录</button></p></section></div></main>`;
   }
+  function loginErrorMessage(error) {
+    if (error?.code === "email_not_confirmed") return "邮箱尚未确认，请先点击确认邮件中的链接，再返回本页登录。";
+    if (error?.status >= 500 || error?.name === "AuthRetryableFetchError" || /network|fetch|timeout|temporar/i.test(error?.message || "")) return "登录服务暂时异常，请稍后重试。";
+    return "邮箱或密码不正确，请检查后重试。";
+  }
   function renderPasswordResetRequest(errorMessage = "", successMessage = "") {
     const unavailable = !cloudConfigured ? "云端服务尚未配置。请先按照 README 填写 config.js。" : !window.supabase?.createClient ? "登录组件加载失败，请检查网络后刷新页面。" : "";
     app.innerHTML = `<main id="main" class="auth-page"><div class="auth-shell"><section class="auth-intro"><div class="brand">${icon("flask","brand-mark")}<span>果果的化学<br>30天通关</span></div><h1>自己重设登录密码。</h1><p>重置邮件只会发送到你的注册邮箱。</p></section><section class="auth-card"><h2>忘记密码</h2><p>输入注册邮箱，我们会发送密码重置邮件。</p>${unavailable ? `<div class="setup-note">${esc(unavailable)}</div>` : ""}${successMessage ? `<div class="setup-note">${esc(successMessage)}</div>` : ""}${errorMessage ? `<div class="auth-error" role="alert">${esc(errorMessage)}</div>` : ""}<form class="auth-form" id="password-reset-request-form"><label class="auth-field">注册邮箱<input type="email" name="email" autocomplete="email" required ${unavailable ? "disabled" : ""}></label><button class="button primary" type="submit" ${unavailable ? "disabled" : ""}>发送重置邮件</button></form><p class="meta"><button class="button ghost small" type="button" data-action="show-login">返回登录</button></p></section></div></main>`;
@@ -245,11 +250,11 @@
     let error;
     try {
       ({data,error} = await cloud.auth.signInWithPassword({email,password}));
-    } catch {
-      renderAuth("无法连接登录服务，请检查网络后重试。");
+    } catch (error) {
+      renderAuth(loginErrorMessage(error));
       return;
     }
-    if (error || !data.user) { renderAuth("邮箱或密码不正确，请检查后重试。"); return; }
+    if (error || !data.user) { renderAuth(loginErrorMessage(error)); return; }
     currentUser = data.user;
     await enterCourse();
   }
@@ -270,7 +275,7 @@
     }
     if (error || !data?.user) { renderSignup("账号创建失败，请检查邮箱和密码后重试。"); return; }
     if (data.session) await cloud.auth.signOut();
-    renderSignup("", "账号已创建。请前往邮箱完成确认；已付款用户请通过购买平台发送注册邮箱，等待开通。");
+    renderSignup("", "注册成功，确认邮件已发送至你的邮箱。请先点击邮件中的确认链接，再返回本页登录。");
   }
   function passwordResetRedirectUrl() {
     return `${location.origin}${location.pathname}?reset-password=1`;
