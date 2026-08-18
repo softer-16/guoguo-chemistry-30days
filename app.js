@@ -6,8 +6,8 @@
   const LEGACY_STORAGE_KEY = "guoguo-chemistry-progress-v1";
   const CLOUD_CONFIG = window.CHEM_SUPABASE_CONFIG || {};
   const cloudConfigured = Boolean(CLOUD_CONFIG.url && CLOUD_CONFIG.publishableKey && !CLOUD_CONFIG.url.includes("YOUR_") && !CLOUD_CONFIG.publishableKey.includes("YOUR_"));
-  const authCallbackParams = new URLSearchParams(`${location.search.replace(/^\?/, "")}&${location.hash.replace(/^#/, "")}`);
-  let invitePasswordSetupRequested = authCallbackParams.get("type") === "invite";
+  const inviteCallback = window.CHEM_INVITE_CALLBACK?.parseInviteCallback(location.href) || {type:"none"};
+  let invitePasswordSetupRequested = inviteCallback.type !== "none";
   const REVIEW_INTERVALS = [0, 1, 3, 7];
   const app = document.getElementById("app");
   const toast = document.getElementById("toast");
@@ -281,7 +281,7 @@
     if (!cloudConfigured || !window.supabase?.createClient || !ACCESS) { renderAuth(); return; }
     cloud = window.supabase.createClient(CLOUD_CONFIG.url,CLOUD_CONFIG.publishableKey,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
     const {data,error} = await cloud.auth.getSession();
-    if (error || !data.session?.user) { renderAuth(error ? "无法检查登录状态，请刷新后重试。" : ""); return; }
+    if (error || !data.session?.user) { renderAuth(invitePasswordSetupRequested ? "邀请链接无效或已过期，请通过购买平台联系商家重新发送邀请。" : error ? "无法检查登录状态，请刷新后重试。" : ""); return; }
     currentUser = data.session.user;
     if (invitePasswordSetupRequested) { renderInvitePasswordSetup(); return; }
     await enterCourse();
