@@ -23,6 +23,17 @@ test("注册后提示邮箱确认与人工开通，且不自动进入课程", ()
 });
 
 test("邀请设密流程已从公开页面停用", () => {
-  assert.doesNotMatch(app, /invite-password-form|completeInvitePassword|updateUser\(\{password\}\)/);
+  assert.doesNotMatch(app, /invite-password-form|completeInvitePassword|renderInvitePasswordSetup/);
   assert.doesNotMatch(index, /invite-callback\.js/);
+});
+
+test("忘记密码通过邮件重置，回跳后仅由用户自行设置新密码", () => {
+  assert.match(app, /data-action="show-password-reset"/);
+  assert.match(app, /id="password-reset-request-form"/);
+  assert.match(app, /cloud\.auth\.resetPasswordForEmail\(email,\{redirectTo:passwordResetRedirectUrl\(\)\}\)/);
+  assert.match(app, /\?reset-password=1/);
+  assert.match(app, /id="password-reset-form"/);
+  assert.match(app, /cloud\.auth\.updateUser\(\{password\}\)/);
+  assert.match(app, /if \(passwordResetRequested\) \{ renderPasswordReset\(\); return; \}/);
+  assert.doesNotMatch(app, /console\.log\(|localStorage\.setItem\([^)]*password/);
 });

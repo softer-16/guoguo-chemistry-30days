@@ -6,6 +6,7 @@
   const LEGACY_STORAGE_KEY = "guoguo-chemistry-progress-v1";
   const CLOUD_CONFIG = window.CHEM_SUPABASE_CONFIG || {};
   const cloudConfigured = Boolean(CLOUD_CONFIG.url && CLOUD_CONFIG.publishableKey && !CLOUD_CONFIG.url.includes("YOUR_") && !CLOUD_CONFIG.publishableKey.includes("YOUR_"));
+  const passwordResetRequested = new URLSearchParams(location.search).get("reset-password") === "1";
   const REVIEW_INTERVALS = [0, 1, 3, 7];
   const app = document.getElementById("app");
   const toast = document.getElementById("toast");
@@ -221,11 +222,18 @@
   }
   function renderAuth(errorMessage = "") {
     const unavailable = !cloudConfigured ? "云端服务尚未配置。请先按照 README 填写 config.js。" : !window.supabase?.createClient ? "登录组件加载失败，请检查网络后刷新页面。" : !ACCESS ? "课程授权组件加载失败，请刷新页面。" : "";
-    app.innerHTML = `<main id="main" class="auth-page"><div class="auth-shell"><section class="auth-intro"><div class="brand">${icon("flask","brand-mark")}<span>果果的化学<br>30天通关</span></div><h1>每天学懂一点，进度一直都在。</h1><p>登录后，Safari 和 Edge 会读取同一份学习记录。</p></section><section class="auth-card"><h2>登录学习账号</h2><p>请使用已注册的邮箱和密码登录。</p>${unavailable ? `<div class="setup-note">${esc(unavailable)}</div>` : ""}${errorMessage ? `<div class="auth-error" role="alert">${esc(errorMessage)}</div>` : ""}<form class="auth-form" id="login-form"><label class="auth-field">邮箱<input type="email" name="email" autocomplete="username" required ${unavailable ? "disabled" : ""}></label><label class="auth-field">密码<input type="password" name="password" autocomplete="current-password" required ${unavailable ? "disabled" : ""}></label><button class="button primary" type="submit" ${unavailable ? "disabled" : ""}>登录课程</button></form><p class="meta">还没有账号？<button class="button ghost small" type="button" data-action="show-signup">创建账号</button></p><p class="meta">已付款但尚未开通？请通过购买平台联系商家，并提供注册邮箱。</p></section></div></main>`;
+    app.innerHTML = `<main id="main" class="auth-page"><div class="auth-shell"><section class="auth-intro"><div class="brand">${icon("flask","brand-mark")}<span>果果的化学<br>30天通关</span></div><h1>每天学懂一点，进度一直都在。</h1><p>登录后，Safari 和 Edge 会读取同一份学习记录。</p></section><section class="auth-card"><h2>登录学习账号</h2><p>请使用已注册的邮箱和密码登录。</p>${unavailable ? `<div class="setup-note">${esc(unavailable)}</div>` : ""}${errorMessage ? `<div class="auth-error" role="alert">${esc(errorMessage)}</div>` : ""}<form class="auth-form" id="login-form"><label class="auth-field">邮箱<input type="email" name="email" autocomplete="username" required ${unavailable ? "disabled" : ""}></label><label class="auth-field">密码<input type="password" name="password" autocomplete="current-password" required ${unavailable ? "disabled" : ""}></label><button class="button primary" type="submit" ${unavailable ? "disabled" : ""}>登录课程</button></form><p class="meta"><button class="button ghost small" type="button" data-action="show-password-reset">忘记密码？</button></p><p class="meta">还没有账号？<button class="button ghost small" type="button" data-action="show-signup">创建账号</button></p><p class="meta">已付款但尚未开通？请通过购买平台联系商家，并提供注册邮箱。</p></section></div></main>`;
   }
   function renderSignup(errorMessage = "", successMessage = "") {
     const unavailable = !cloudConfigured ? "云端服务尚未配置。请先按照 README 填写 config.js。" : !window.supabase?.createClient ? "登录组件加载失败，请检查网络后刷新页面。" : "";
     app.innerHTML = `<main id="main" class="auth-page"><div class="auth-shell"><section class="auth-intro"><div class="brand">${icon("flask","brand-mark")}<span>果果的化学<br>30天通关</span></div><h1>先创建学习账号。</h1><p>账号创建后可在手机和电脑使用同一份学习记录。</p></section><section class="auth-card"><h2>创建账号</h2><p>请使用常用邮箱注册，并设置登录密码。</p>${unavailable ? `<div class="setup-note">${esc(unavailable)}</div>` : ""}${successMessage ? `<div class="setup-note">${esc(successMessage)}</div>` : ""}${errorMessage ? `<div class="auth-error" role="alert">${esc(errorMessage)}</div>` : ""}<form class="auth-form" id="signup-form"><label class="auth-field">邮箱<input type="email" name="email" autocomplete="email" required ${unavailable ? "disabled" : ""}></label><label class="auth-field">密码<input type="password" name="password" autocomplete="new-password" minlength="8" required ${unavailable ? "disabled" : ""}></label><label class="auth-field">确认密码<input type="password" name="passwordConfirm" autocomplete="new-password" minlength="8" required ${unavailable ? "disabled" : ""}></label><button class="button primary" type="submit" ${unavailable ? "disabled" : ""}>创建账号</button></form><p class="meta">注册后请完成邮箱确认；已付款用户请通过购买平台发送注册邮箱，等待开通。</p><p class="meta"><button class="button ghost small" type="button" data-action="show-login">返回登录</button></p></section></div></main>`;
+  }
+  function renderPasswordResetRequest(errorMessage = "", successMessage = "") {
+    const unavailable = !cloudConfigured ? "云端服务尚未配置。请先按照 README 填写 config.js。" : !window.supabase?.createClient ? "登录组件加载失败，请检查网络后刷新页面。" : "";
+    app.innerHTML = `<main id="main" class="auth-page"><div class="auth-shell"><section class="auth-intro"><div class="brand">${icon("flask","brand-mark")}<span>果果的化学<br>30天通关</span></div><h1>自己重设登录密码。</h1><p>重置邮件只会发送到你的注册邮箱。</p></section><section class="auth-card"><h2>忘记密码</h2><p>输入注册邮箱，我们会发送密码重置邮件。</p>${unavailable ? `<div class="setup-note">${esc(unavailable)}</div>` : ""}${successMessage ? `<div class="setup-note">${esc(successMessage)}</div>` : ""}${errorMessage ? `<div class="auth-error" role="alert">${esc(errorMessage)}</div>` : ""}<form class="auth-form" id="password-reset-request-form"><label class="auth-field">注册邮箱<input type="email" name="email" autocomplete="email" required ${unavailable ? "disabled" : ""}></label><button class="button primary" type="submit" ${unavailable ? "disabled" : ""}>发送重置邮件</button></form><p class="meta"><button class="button ghost small" type="button" data-action="show-login">返回登录</button></p></section></div></main>`;
+  }
+  function renderPasswordReset(errorMessage = "") {
+    app.innerHTML = `<main id="main" class="auth-page"><div class="auth-shell"><section class="auth-intro"><div class="brand">${icon("flask","brand-mark")}<span>果果的化学<br>30天通关</span></div><h1>设置新的登录密码。</h1><p>密码只由你本人设置和保管。</p></section><section class="auth-card"><h2>设置新密码</h2>${errorMessage ? `<div class="auth-error" role="alert">${esc(errorMessage)}</div>` : ""}<form class="auth-form" id="password-reset-form"><label class="auth-field">新密码<input type="password" name="password" autocomplete="new-password" minlength="8" required></label><label class="auth-field">确认新密码<input type="password" name="passwordConfirm" autocomplete="new-password" minlength="8" required></label><button class="button primary" type="submit">保存新密码</button></form></section></div></main>`;
   }
   async function signIn(form) {
     const button = form.querySelector('button[type="submit"]');
@@ -264,6 +272,47 @@
     if (data.session) await cloud.auth.signOut();
     renderSignup("", "账号已创建。请前往邮箱完成确认；已付款用户请通过购买平台发送注册邮箱，等待开通。");
   }
+  function passwordResetRedirectUrl() {
+    return `${location.origin}${location.pathname}?reset-password=1`;
+  }
+  async function requestPasswordReset(form) {
+    const button = form.querySelector('button[type="submit"]');
+    const email = form.elements.email.value.trim();
+    button.disabled = true;
+    button.textContent = "正在发送…";
+    let error;
+    try {
+      ({error} = await cloud.auth.resetPasswordForEmail(email,{redirectTo:passwordResetRedirectUrl()}));
+    } catch {
+      error = true;
+    }
+    if (error) { renderPasswordResetRequest("暂时无法发送重置邮件，请稍后重试。"); return; }
+    renderPasswordResetRequest("", "如该邮箱已注册，请前往邮箱打开重置链接并设置新密码。");
+  }
+  function clearPasswordResetUrl() {
+    const url = new URL(location.href);
+    url.searchParams.delete("reset-password");
+    url.searchParams.delete("code");
+    url.hash = "";
+    history.replaceState({}, document.title, `${url.pathname}${url.search}`);
+  }
+  async function completePasswordReset(form) {
+    const button = form.querySelector('button[type="submit"]');
+    const password = form.elements.password.value;
+    const passwordConfirm = form.elements.passwordConfirm.value;
+    if (password !== passwordConfirm) { renderPasswordReset("两次输入的密码不一致，请重新填写。"); return; }
+    button.disabled = true;
+    button.textContent = "正在保存…";
+    let error;
+    try {
+      ({error} = await cloud.auth.updateUser({password}));
+    } catch {
+      error = true;
+    }
+    if (error) { renderPasswordReset("密码保存失败，请检查密码要求后重试。"); return; }
+    clearPasswordResetUrl();
+    await enterCourse();
+  }
   async function signOut() {
     if (entitlementDecision.allowed) await syncStateNow();
     try { await cloud.auth.signOut(); } catch {}
@@ -281,8 +330,9 @@
     if (!cloudConfigured || !window.supabase?.createClient || !ACCESS) { renderAuth(); return; }
     cloud = window.supabase.createClient(CLOUD_CONFIG.url,CLOUD_CONFIG.publishableKey,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
     const {data,error} = await cloud.auth.getSession();
-    if (error || !data.session?.user) { renderAuth(error ? "无法检查登录状态，请刷新后重试。" : ""); return; }
+    if (error || !data.session?.user) { renderAuth(passwordResetRequested ? "重置链接无效或已过期，请重新申请。" : error ? "无法检查登录状态，请刷新后重试。" : ""); return; }
     currentUser = data.session.user;
+    if (passwordResetRequested) { renderPasswordReset(); return; }
     await enterCourse();
   }
 
@@ -541,6 +591,7 @@
   app.addEventListener("click", event => {
     const actionTarget = event.target.closest("[data-action]");
     if (actionTarget?.dataset.action === "show-signup") { renderSignup(); return; }
+    if (actionTarget?.dataset.action === "show-password-reset") { renderPasswordResetRequest(); return; }
     if (actionTarget?.dataset.action === "show-login") { renderAuth(); return; }
     if (!currentUser) return;
     if (actionTarget?.dataset.action === "logout") { signOut(); return; }
@@ -573,6 +624,16 @@
     if (event.target.matches("[data-time-index]")) { state.settings.times[Number(event.target.dataset.timeIndex)]=event.target.value;saveState(); }
   });
   app.addEventListener("submit", event => {
+    if (event.target.id === "password-reset-request-form") {
+      event.preventDefault();
+      requestPasswordReset(event.target);
+      return;
+    }
+    if (event.target.id === "password-reset-form") {
+      event.preventDefault();
+      completePasswordReset(event.target);
+      return;
+    }
     if (event.target.id === "signup-form") {
       event.preventDefault();
       signUp(event.target);

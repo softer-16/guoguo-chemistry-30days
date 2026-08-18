@@ -69,7 +69,7 @@ set status = excluded.status,
 
 普通浏览器用户只能读取自己的授权，不能新增、修改或删除授权。删除Auth用户时，其课程授权会随账号删除，但不会影响其他用户或现有 `user_progress` 表结构。
 
-邮箱确认邮件会默认跳转至 Supabase Auth 的 Site URL；上线前必须将正式网站地址配置为 Site URL，并添加到 Redirect URLs。网页不写死个人联系方式；未开通用户统一通过闲鱼订单消息联系商家，并提供注册邮箱。
+邮箱确认邮件会默认跳转至 Supabase Auth 的 Site URL；上线前必须将正式网站地址配置为 Site URL，并添加到 Redirect URLs。密码重置还需要将正式网站的 `https://你的域名/?reset-password=1` 加入 Redirect URLs。网页不写死个人联系方式；未开通用户统一通过闲鱼订单消息联系商家，并提供注册邮箱。
 
 ## 课程正文保护与私有导入
 
