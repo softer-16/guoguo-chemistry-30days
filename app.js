@@ -3,6 +3,7 @@
 
   let DATA = null;
   const ACCESS = window.CHEM_ENTITLEMENT;
+  const PROGRESS = window.CHEM_PROGRESS_STATE;
   const LEGACY_STORAGE_KEY = "guoguo-chemistry-progress-v1";
   const CLOUD_CONFIG = window.CHEM_SUPABASE_CONFIG || {};
   const cloudConfigured = Boolean(CLOUD_CONFIG.url && CLOUD_CONFIG.publishableKey && !CLOUD_CONFIG.url.includes("YOUR_") && !CLOUD_CONFIG.publishableKey.includes("YOUR_"));
@@ -50,12 +51,14 @@
       version: DATA?.version || "unloaded",
       tasks: {}, answers: {}, wrong: {}, parentVerified: {},
       lessonSection: {}, questionIndex: {}, hints: {}, oralOpen: {},
+      testAnswers: {}, testWrong: {}, testQuestionIndex: {}, testHints: {},
       settings: { reminderEnabled: true, times: ["10:30"] }
     };
   }
 
   function normalizeState(value) {
-    return value && typeof value === "object" ? {...defaultState(), ...value, settings: {...defaultState().settings, ...(value.settings || {})}} : defaultState();
+    const normalized = value && typeof value === "object" ? {...defaultState(), ...value, settings: {...defaultState().settings, ...(value.settings || {})}} : defaultState();
+    return PROGRESS.ensureTestBuckets(normalized);
   }
   function readState(key) {
     try {
@@ -331,7 +334,7 @@
     renderAuth();
   }
   async function bootstrap() {
-    if (!cloudConfigured || !window.supabase?.createClient || !ACCESS) { renderAuth(); return; }
+    if (!cloudConfigured || !window.supabase?.createClient || !ACCESS || !PROGRESS) { renderAuth(); return; }
     cloud = window.supabase.createClient(CLOUD_CONFIG.url,CLOUD_CONFIG.publishableKey,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
     const {data,error} = await cloud.auth.getSession();
     if (error || !data.session?.user) { renderAuth(passwordResetRequested ? "重置链接无效或已过期，请重新申请。" : error ? "无法检查登录状态，请刷新后重试。" : ""); return; }
@@ -411,8 +414,8 @@
     app.innerHTML = shell(content, "today");
   }
 
-  function questionFeedback(q) {
-    const answer = state.answers[q.id];
+  function questionFeedback(q, context = "practice") {
+    const answer = PROGRESS.bucket(state, context).answers[q.id];
     if (!answer) return "";
     if (answer.status === "wrong" && answer.attempts < 2 && !answer.revealed) return `<div class="feedback wrong"><h3>还差一步</h3><p>先打开下一层提示，重新检查判断依据。连续两次错误后系统会显示完整解析。</p></div>`;
     const title = answer.status === "correct" ? "回答正确" : answer.status === "unknown" ? "已记为不会" : "完整解析";
@@ -421,12 +424,14 @@
   }
 
   function renderQuestion(q, context = "practice", position = 0, total = 1) {
-    const answer = state.answers[q.id];
+    const progress = PROGRESS.bucket(state, context);
+    const answer = progress.answers[q.id];
     const selected = answer?.value || "";
     const control = q.type === "choice" ? `<div class="options">${q.options.map(option => `<label class="option"><input type="radio" name="answer-${q.id}" value="${esc(option)}" ${selected === option ? "checked" : ""}><span>${esc(option)}</span></label>`).join("")}</div>` : `<textarea class="text-answer" id="answer-${q.id}" placeholder="先写判断，再写依据。">${esc(selected)}</textarea>`;
-    const shown = state.hints[q.id] || 0;
-    const hints = shown ? `<div class="hint-content">${q.hints.slice(0, shown).map((hint,index) => `<p><strong>${index+1}.</strong> ${esc(hint)}</p>`).join("")}${shown < q.hints.length ? `<button class="button ghost small" data-action="more-hint" data-id="${q.id}">再看一层提示</button>` : ""}</div>` : "";
-    return `<div class="question-head"><strong>${context === "test" ? "滚动检测" : "随堂练习"} ${position+1}/${total}</strong><span class="difficulty">难度：${esc(q.difficulty)}</span></div><p class="question-text">${esc(q.question)}</p>${control}<div class="question-actions"><button class="button primary" data-action="submit-answer" data-id="${q.id}">检查答案</button><button class="button" data-action="unknown" data-id="${q.id}">我不会</button></div><div class="hint-box"><button class="hint-toggle" data-action="show-hint" data-id="${q.id}"><span>分步提示</span><span>${shown ? "收起/继续" : "展开"}</span></button>${hints}</div><button class="button ghost small" data-action="reveal" data-id="${q.id}">查看完整答案</button>${questionFeedback(q)}<div class="question-nav"><button class="button small" data-action="prev-question" ${position === 0 ? "disabled" : ""}>${icon("back")}上一题</button><span class="meta">${esc(q.topic)} · ${esc(q.source)}</span><button class="button small" data-action="next-question" ${position === total-1 ? "disabled" : ""}>下一题${icon("arrow")}</button></div>`;
+    const shown = progress.hints[q.id] || 0;
+    const contextData = `data-context="${context}"`;
+    const hints = shown ? `<div class="hint-content">${q.hints.slice(0, shown).map((hint,index) => `<p><strong>${index+1}.</strong> ${esc(hint)}</p>`).join("")}${shown < q.hints.length ? `<button class="button ghost small" data-action="more-hint" data-id="${q.id}" ${contextData}>再看一层提示</button>` : ""}</div>` : "";
+    return `<div class="question-head"><strong>${context === "test" ? "滚动检测" : "随堂练习"} ${position+1}/${total}</strong><span class="difficulty">难度：${esc(q.difficulty)}</span></div><p class="question-text">${esc(q.question)}</p>${control}<div class="question-actions"><button class="button primary" data-action="submit-answer" data-id="${q.id}" ${contextData}>检查答案</button><button class="button" data-action="unknown" data-id="${q.id}" ${contextData}>我不会</button></div><div class="hint-box"><button class="hint-toggle" data-action="show-hint" data-id="${q.id}" ${contextData}><span>分步提示</span><span>${shown ? "收起/继续" : "展开"}</span></button>${hints}</div><button class="button ghost small" data-action="reveal" data-id="${q.id}" ${contextData}>查看完整答案</button>${questionFeedback(q,context)}<div class="question-nav"><button class="button small" data-action="prev-question" ${contextData} ${position === 0 ? "disabled" : ""}>${icon("back")}上一题</button><span class="meta">${esc(q.topic)} · ${esc(q.source)}</span><button class="button small" data-action="next-question" ${contextData} ${position === total-1 ? "disabled" : ""}>下一题${icon("arrow")}</button></div>`;
   }
 
   function renderLesson(dayId) {
@@ -499,17 +504,17 @@
   function renderTest(dayId) {
     const day = dayById(dayId);
     if (!day.test) { app.innerHTML = shell(`<div class="page"><div class="empty"><h2>今天没有单独的滚动检测</h2><p>请从左侧“滚动检测”进入最近已开放的一次检测。</p></div></div>`, "test"); return; }
-    const key = `test:${day.id}`;
-    const index = Math.min(state.questionIndex[key] || 0, day.test.length-1);
+    const index = Math.min(state.testQuestionIndex[day.id] || 0, day.test.length-1);
     const q = questionById(day.test[index]);
     const title = day.testTitle || `Day ${String(day.day).padStart(2, "0")} 滚动检测`;
     const intro = day.testIntro || `${day.test.length}题，建议独立完成。检测后统一回看所有错误题的完整解析。`;
-    app.innerHTML = shell(`<div class="page narrow"><h1>${esc(title)}</h1><p class="lead">${esc(intro)}</p><section class="side-panel">${renderQuestion(q,"test",index,day.test.length)}</section></div>`, "test");
+    const stats = PROGRESS.answerStats(state,"test",day.test);
+    app.innerHTML = shell(`<div class="page narrow"><h1>${esc(title)}</h1><p class="lead">${esc(intro)}</p><p class="meta">检测已作答 ${stats.attempted}/${stats.total} · 正确 ${stats.correct}/${stats.total}</p><section class="side-panel">${renderQuestion(q,"test",index,day.test.length)}</section></div>`, "test");
   }
 
   function renderSettings() {
     const times = state.settings.times.map((time,index) => `<div class="time-row"><input class="input" type="time" value="${esc(time)}" data-time-index="${index}"><button class="button small danger" data-action="remove-time" data-index="${index}">删除</button></div>`).join("");
-    const content = `<div class="page narrow"><h1>提醒与数据</h1><div class="settings-grid"><section class="setting-block"><h2>课程与学习计划</h2><p><strong>完整30天课程 · 已开通</strong></p><p>学习计划开始：${esc(currentEntitlement?.plan_start_date || "尚未设置")}</p><p class="meta">开始日期只决定每日学习建议和日历提醒；Day01–Day30始终全部可访问。</p></section><section class="setting-block"><h2>学习提醒</h2><label class="completion-item"><input type="checkbox" id="reminder-enabled" ${state.settings.reminderEnabled ? "checked" : ""}>启用提醒时段</label><div id="time-list">${times}</div><button class="button small" data-action="add-time">添加时段</button><p class="meta">网页关闭后由iPhone日历负责提醒；网站本身不申请推送权限。</p><button class="button" data-action="calendar">${icon("download")}生成日历提醒文件</button></section><section class="setting-block"><h2>云端同步与备份</h2><p>登录账号后，电脑与移动设备会自动读取同一份学习进度。请等待顶部显示“已保存”后再关闭网页。</p><div style="display:flex;gap:10px;flex-wrap:wrap"><button class="button" data-action="export">${icon("download")}导出进度</button><label class="button">${icon("upload")}导入进度<input class="file-input" id="import-file" type="file" accept="application/json"></label></div></section><section class="setting-block"><h2>重置</h2><p>只在需要从头开始时使用。此操作会清除当前账号的答案和错题记录，并同步到云端。</p><button class="button danger" data-action="reset">重置当前账号进度</button></section></div></div>`;
+    const content = `<div class="page narrow"><h1>提醒与数据</h1><div class="settings-grid"><section class="setting-block"><h2>课程与学习计划</h2><p><strong>完整30天课程 · 已开通</strong></p><p>学习计划开始：${esc(currentEntitlement?.plan_start_date || "尚未设置")}</p><p class="meta">开始日期只决定每日学习建议和日历提醒；Day01–Day30始终全部可访问。</p></section><section class="setting-block"><h2>学习提醒</h2><label class="completion-item"><input type="checkbox" id="reminder-enabled" ${state.settings.reminderEnabled ? "checked" : ""}>启用提醒时段</label><div id="time-list">${times}</div><button class="button small" data-action="add-time">添加时段</button><p class="meta">网页关闭后由iPhone日历负责提醒；网站本身不申请推送权限。</p><button class="button" data-action="calendar">${icon("download")}生成日历提醒文件</button></section><section class="setting-block"><h2>云端同步与备份</h2><p>登录账号后，电脑与移动设备会自动读取同一份学习进度。请等待顶部显示“已保存”后再关闭网页。</p><p class="meta">导入会覆盖当前账号全部进度；选择文件后还会再次确认。</p><div style="display:flex;gap:10px;flex-wrap:wrap"><button class="button" data-action="export">${icon("download")}导出进度</button><label class="button">${icon("upload")}导入进度<input class="file-input" id="import-file" type="file" accept="application/json"></label></div></section><section class="setting-block"><h2>重置</h2><p>只在需要从头开始时使用。会清除日常练习和检测的答案、错题、任务、家长验收、题目位置、提示和提醒，并同步到云端。</p><button class="button danger" data-action="reset">重置当前账号进度</button></section></div></div>`;
     app.innerHTML = shell(content, "settings");
   }
 
@@ -519,39 +524,30 @@
     const matched = q.keywords.filter(keyword => normalized.includes(String(keyword).replace(/[\s，。；、,.!?！？]/g, "").toLowerCase()));
     return {correct: matched.length >= q.threshold, matched};
   }
-  function addWrong(q, reason) {
-    const existing = state.wrong[q.id];
-    state.wrong[q.id] = existing || {questionId:q.id, reason, firstAt:todayISO(), due:todayISO(), reviewIndex:0, resolved:false};
-    state.wrong[q.id].reason = reason;
-  }
-  function resolveReview(q) {
-    const item = state.wrong[q.id];
-    if (!item || item.resolved || item.due > todayISO()) return;
-    item.reviewIndex += 1;
-    if (item.reviewIndex >= REVIEW_INTERVALS.length) { item.resolved = true; item.resolvedAt = todayISO(); }
-    else item.due = addDays(todayISO(), REVIEW_INTERVALS[item.reviewIndex]);
-  }
+  function addWrong(q, reason, context = "practice") { return PROGRESS.addWrong(state,context,q.id,reason,todayISO()); }
+  function resolveReview(q, context = "practice") { return PROGRESS.resolveReview(state,context,q.id,todayISO(),addDays,REVIEW_INTERVALS); }
   function getAnswerValue(q) {
     if (q.type === "choice") return document.querySelector(`input[name="answer-${q.id}"]:checked`)?.value || "";
     return document.getElementById(`answer-${q.id}`)?.value.trim() || "";
   }
-  function submitAnswer(id) {
+  function submitAnswer(id, context = "practice") {
     const q = questionById(id); const value = getAnswerValue(q);
     if (!value) { notify("请先作答，再检查答案。"); return; }
-    const previous = state.answers[id] || {attempts:0};
+    const progress = PROGRESS.bucket(state,context);
+    const previous = progress.answers[id] || {attempts:0};
     const result = evaluate(q,value);
-    state.answers[id] = {value, status:result.correct?"correct":"wrong", attempts:(previous.attempts||0)+1, matched:result.matched, lastAt:todayISO(), revealed:previous.revealed||false};
-    if (result.correct) { resolveReview(q); notify("回答正确，继续保持判断依据完整。"); }
-    else { addWrong(q,"答错"); notify(state.answers[id].attempts >= 2 ? "连续两次错误，已显示完整解析。" : "先看提示，找出判断依据再答一次。"); }
+    progress.answers[id] = {value, status:result.correct?"correct":"wrong", attempts:(previous.attempts||0)+1, matched:result.matched, lastAt:todayISO(), revealed:previous.revealed||false};
+    if (result.correct) { resolveReview(q,context); notify("回答正确，继续保持判断依据完整。"); }
+    else { addWrong(q,"答错",context); notify(progress.answers[id].attempts >= 2 ? "连续两次错误，已显示完整解析。" : "先看提示，找出判断依据再答一次。"); }
     saveState(); render();
   }
-  function markUnknown(id) {
-    const q = questionById(id); addWrong(q,"不会做"); state.answers[id] = {...(state.answers[id]||{}), value:getAnswerValue(q), status:"unknown", attempts:(state.answers[id]?.attempts||0)+1, revealed:true, lastAt:todayISO()}; saveState(); notify("已记为不会做，并加入错题回流。"); render();
+  function markUnknown(id, context = "practice") {
+    const q = questionById(id); const progress = PROGRESS.bucket(state,context); addWrong(q,"不会做",context); progress.answers[id] = {...(progress.answers[id]||{}), value:getAnswerValue(q), status:"unknown", attempts:(progress.answers[id]?.attempts||0)+1, revealed:true, lastAt:todayISO()}; saveState(); notify("已记为不会做，并加入错题回流。"); render();
   }
-  function revealAnswer(id) {
-    const q = questionById(id); const current = state.answers[id]; const hints = state.hints[id] || 0;
+  function revealAnswer(id, context = "practice") {
+    const q = questionById(id); const progress = PROGRESS.bucket(state,context); const current = progress.answers[id]; const hints = progress.hints[id] || 0;
     if (!current?.attempts && hints < 1) { notify("请先尝试作答，或至少打开一级提示。"); return; }
-    addWrong(q,"查看答案"); state.answers[id] = {...(current||{}), value:current?.value||getAnswerValue(q), status:current?.status==="correct"?"correct":"wrong", attempts:current?.attempts||0, revealed:true, lastAt:todayISO()}; saveState(); render();
+    addWrong(q,"查看答案",context); progress.answers[id] = {...(current||{}), value:current?.value||getAnswerValue(q), status:current?.status==="correct"?"correct":"wrong", attempts:current?.attempts||0, revealed:true, lastAt:todayISO()}; saveState(); render();
   }
 
   function exportState() {
@@ -559,7 +555,8 @@
     const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = `果果的化学学习进度_${todayISO()}.json`; link.click(); URL.revokeObjectURL(link.href); notify("进度文件已导出。");
   }
   function importState(file) {
-    const reader = new FileReader(); reader.onload = () => { try { const parsed = JSON.parse(reader.result); const next = parsed.state || parsed; if (!next.answers || !next.settings) throw new Error("格式不正确"); state = {...defaultState(), ...next}; saveState(); notify("进度已导入。"); render(); } catch { notify("导入失败：请选择本网站导出的JSON文件。"); } }; reader.readAsText(file,"utf-8");
+    if (!confirm("导入会覆盖当前账号的全部进度：日常练习和检测的答案、错题、任务、家长验收、题目位置、提示和提醒。确认继续吗？")) return;
+    const reader = new FileReader(); reader.onload = () => { try { const parsed = JSON.parse(reader.result); const next = parsed.state || parsed; if (!next.answers || !next.settings) throw new Error("格式不正确"); state = normalizeState({...defaultState(), ...next}); saveState(); notify("进度已导入。"); render(); } catch { notify("导入失败：请选择本网站导出的JSON文件。"); } }; reader.readAsText(file,"utf-8");
   }
   function calendarFile() {
     if (!state.settings.reminderEnabled || !state.settings.times.length) { notify("请先启用并设置至少一个提醒时间。"); return; }
@@ -575,7 +572,7 @@
   }
 
   function changeQuestion(delta) {
-    const route = parseRoute(); const day = dayById(route.parts[1] || suggestedDay().id); const isTest = route.parts[0] === "test"; const key = isTest ? `test:${day.id}` : day.id; const ids = isTest ? (day.test || []) : day.questions; state.questionIndex[key] = Math.max(0, Math.min(ids.length-1,(state.questionIndex[key]||0)+delta)); saveState(); render();
+    const route = parseRoute(); const day = dayById(route.parts[1] || suggestedDay().id); const isTest = route.parts[0] === "test"; const progress = PROGRESS.bucket(state,isTest ? "test" : "practice"); const key = day.id; const ids = isTest ? (day.test || []) : day.questions; progress.questionIndex[key] = Math.max(0, Math.min(ids.length-1,(progress.questionIndex[key]||0)+delta)); saveState(); render();
   }
   function render() {
     if (!refreshEntitlementDecision()) return renderEntitlementStatus();
@@ -604,10 +601,10 @@
     if (routeTarget) { location.hash = `#/${routeTarget.dataset.route}`; return; }
     if (!actionTarget) return;
     const {action,id,day,index} = actionTarget.dataset;
-    if (action === "submit-answer") submitAnswer(id);
-    else if (action === "unknown") markUnknown(id);
-    else if (action === "reveal") revealAnswer(id);
-    else if (action === "show-hint" || action === "more-hint") { const q=questionById(id); state.hints[id]=Math.min(q.hints.length,(state.hints[id]||0)+1); saveState(); render(); }
+    if (action === "submit-answer") submitAnswer(id,actionTarget.dataset.context);
+    else if (action === "unknown") markUnknown(id,actionTarget.dataset.context);
+    else if (action === "reveal") revealAnswer(id,actionTarget.dataset.context);
+    else if (action === "show-hint" || action === "more-hint") { const q=questionById(id); const progress=PROGRESS.bucket(state,actionTarget.dataset.context); progress.hints[id]=Math.min(q.hints.length,(progress.hints[id]||0)+1); saveState(); render(); }
     else if (action === "next-question") changeQuestion(1);
     else if (action === "prev-question") changeQuestion(-1);
     else if (action === "lesson-section") { state.lessonSection[day]=Number(index); saveState(); render(); }
@@ -619,7 +616,7 @@
     else if (action === "calendar") calendarFile();
     else if (action === "add-time") { state.settings.times.push("16:00"); saveState(); render(); }
     else if (action === "remove-time") { state.settings.times.splice(Number(index),1); saveState(); render(); }
-    else if (action === "reset" && confirm("确认重置当前账号的全部学习进度吗？此操作会同步到云端且不可撤销。")) { state=defaultState();saveState();notify("当前账号进度已重置。");render(); }
+    else if (action === "reset" && confirm("确认重置当前账号全部进度吗？这会清除日常练习和检测的答案、错题、任务、家长验收、题目位置、提示和提醒，并同步到云端且不可撤销。")) { state=defaultState();saveState();notify("当前账号进度已重置。");render(); }
   });
   app.addEventListener("change", event => {
     if (event.target.matches("[data-filter]")) { const day=document.querySelector('[data-filter="day"]')?.value||"all"; const topic=document.querySelector('[data-filter="topic"]')?.value||"all"; location.hash=`#/bank?day=${encodeURIComponent(day)}&topic=${encodeURIComponent(topic)}`; }
