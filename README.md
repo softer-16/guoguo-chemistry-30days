@@ -27,6 +27,8 @@ python -m http.server 4173
 
 ## 配置账号与云端进度
 
+首批用户的人工开通步骤见 [首批用户开通 SOP](docs/首批用户开通SOP.md)。
+
 1. 在 Supabase 创建项目。
 2. 打开 SQL Editor，执行 [`supabase/schema.sql`](supabase/schema.sql)。
 3. 在 Authentication 设置中启用邮箱注册，并关闭 Confirm Email。
