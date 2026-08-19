@@ -229,7 +229,6 @@
     app.innerHTML = `<main id="main" class="auth-page"><div class="auth-shell"><section class="auth-intro"><div class="brand">${icon("flask","brand-mark")}<span>果果的化学<br>30天通关</span></div><h1>先创建学习账号。</h1><p>账号创建后可在手机和电脑使用同一份学习记录。</p></section><section class="auth-card"><h2>创建账号</h2><p>请使用常用邮箱注册，并设置登录密码。</p>${unavailable ? `<div class="setup-note">${esc(unavailable)}</div>` : ""}${successMessage ? `<div class="setup-note">${esc(successMessage)}</div>` : ""}${errorMessage ? `<div class="auth-error" role="alert">${esc(errorMessage)}</div>` : ""}<form class="auth-form" id="signup-form"><label class="auth-field">邮箱<input type="email" name="email" autocomplete="email" required ${unavailable ? "disabled" : ""}></label><label class="auth-field">密码<input type="password" name="password" autocomplete="new-password" minlength="8" required ${unavailable ? "disabled" : ""}></label><label class="auth-field">确认密码<input type="password" name="passwordConfirm" autocomplete="new-password" minlength="8" required ${unavailable ? "disabled" : ""}></label><button class="button primary" type="submit" ${unavailable ? "disabled" : ""}>创建账号</button></form><p class="meta">注册后请完成邮箱确认；已付款用户请通过购买平台发送注册邮箱，等待开通。</p><p class="meta"><button class="button ghost small" type="button" data-action="show-login">返回登录</button></p></section></div></main>`;
   }
   function loginErrorMessage(error) {
-    if (error?.code === "email_not_confirmed") return "邮箱尚未确认，请先点击确认邮件中的链接，再返回本页登录。";
     if (error?.status >= 500 || error?.name === "AuthRetryableFetchError" || /network|fetch|timeout|temporar/i.test(error?.message || "")) return "登录服务暂时异常，请稍后重试。";
     return "邮箱或密码不正确，请检查后重试。";
   }
@@ -275,7 +274,7 @@
     }
     if (error || !data?.user) { renderSignup("账号创建失败，请检查邮箱和密码后重试。"); return; }
     if (data.session) await cloud.auth.signOut();
-    renderSignup("", "注册成功，确认邮件已发送至你的邮箱。请先点击邮件中的确认链接，再返回本页登录。");
+    renderSignup("", "账号创建成功，请直接使用注册邮箱和密码登录。已付款用户请通过购买平台发送注册邮箱，等待管理员开通课程。");
   }
   function passwordResetRedirectUrl() {
     return `${location.origin}${location.pathname}?reset-password=1`;
